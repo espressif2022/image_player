@@ -312,8 +312,8 @@ static void anim_player_task(void *arg)
 
     while (1) {
         EventBits_t bits = xEventGroupWaitBits(ctx->events.event_group,
-                                             NEED_DELETE,
-                                             pdTRUE, pdFALSE, pdMS_TO_TICKS(10));
+                                               NEED_DELETE,
+                                               pdTRUE, pdFALSE, pdMS_TO_TICKS(10));
 
         if (bits & NEED_DELETE) {
             ESP_LOGW(TAG, "Player deleted");
@@ -361,7 +361,7 @@ static void anim_player_task(void *arg)
                     int16_t new_index = anim_decoder_find_asset(ctx->assets_handle, name);
                     free(header.palette);
 
-                    if(new_index < mmap_assets_get_stored_files(ctx->assets_handle) && new_index >= 0){
+                    if (new_index < mmap_assets_get_stored_files(ctx->assets_handle) && new_index >= 0) {
                         frame_data = mmap_assets_get_mem(ctx->assets_handle, new_index);
                         frame_size = mmap_assets_get_size(ctx->assets_handle, new_index);
                         format = anim_decoder_parse_header(frame_data, frame_size, &header);
@@ -377,8 +377,8 @@ static void anim_player_task(void *arg)
 
                 // Check for new events or delete request
                 bits = xEventGroupWaitBits(ctx->events.event_group,
-                                         NEED_DELETE,
-                                         pdTRUE, pdFALSE, pdMS_TO_TICKS(0));
+                                           NEED_DELETE,
+                                           pdTRUE, pdFALSE, pdMS_TO_TICKS(0));
                 if (bits & NEED_DELETE) {
                     ESP_LOGW(TAG, "Player deleted");
                     xEventGroupSetBits(ctx->events.event_group, DELETE_DONE);

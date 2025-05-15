@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/CMakeFiles/bootloader
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/CMakeFiles/bootloader.rule
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/CMakeFiles/bootloader-complete.rule
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule

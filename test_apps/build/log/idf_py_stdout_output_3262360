@@ -1,0 +1,36 @@
+Command: ninja app-flash
+[1/2] cd /home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/esp-idf/esptool_py && /home/xuxin/.espressif/python_env/idf5.5_py3.10_env/bin/python /home/xuxin/esp_work/esp-idf-gitlab/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/partition_table/partition-table.bin /home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build/test_anim_player.bin
+test_anim_player.bin binary size 0x43430 bytes. Smallest app partition is 0x7d000 bytes. 0x39bd0 bytes (46%) free.
+[1/2] cd /home/xuxin/esp_work/esp-idf-gitlab/components/esptool_py && /usr/bin/cmake -D IDF_PATH=/home/xuxin/esp_work/esp-idf-gitlab -D "SERIAL_TOOL=/home/xuxin/.espressif/python_env/idf5.5_py3.10_env/bin/python;;/home/xuxin/esp_work/esp-idf-gitlab/components/esptool_py/esptool/esptool.py;--chip;esp32s3" -D "SERIAL_TOOL_ARGS=--before=default_reset;--after=hard_reset;write_flash;@app-flash_args" -D WORKING_DIRECTORY=/home/xuxin/esp_work/esp-hi/components/anim_player/test_apps/build -P /home/xuxin/esp_work/esp-idf-gitlab/components/esptool_py/run_serial_tool.cmake
+esptool.py --chip esp32s3 -p /dev/ttyACM0 -b 460800 --before=default_reset --after=hard_reset write_flash --flash_mode dio --flash_freq 80m --flash_size 4MB 0x10000 test_anim_player.bin
+esptool.py v4.9.dev5
+Serial port /dev/ttyACM0
+Connecting...
+Chip is ESP32-S3 (QFN56) (revision v0.1)
+Features: WiFi, BLE, Embedded PSRAM 8MB (AP_3v3)
+Crystal is 40MHz
+USB mode: USB-Serial/JTAG
+MAC: 7c:df:a1:e0:b8:e8
+Uploading stub...
+Running stub...
+Stub running...
+Changing baud rate to 460800
+Changed.
+Configuring flash size...
+Flash will be erased from 0x00010000 to 0x00053fff...
+Compressed 275504 bytes to 148493...
+Writing at 0x00010000... (10 %)
+Writing at 0x0001c10d... (20 %)
+Writing at 0x000244f3... (30 %)
+Writing at 0x0002aec7... (40 %)
+Writing at 0x00031088... (50 %)
+Writing at 0x0003810e... (60 %)
+Writing at 0x0003f80f... (70 %)
+Writing at 0x0004602a... (80 %)
+Writing at 0x0004bfa2... (90 %)
+Writing at 0x00052ebf... (100 %)
+Wrote 275504 bytes (148493 compressed) at 0x00010000 in 3.0 seconds (effective 731.7 kbit/s)...
+Hash of data verified.
+
+Leaving...
+Hard resetting via RTS pin...

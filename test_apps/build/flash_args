@@ -1,0 +1,6 @@
+--flash_mode dio --flash_freq 80m --flash_size 4MB
+0x0 bootloader/bootloader.bin
+0x10000 test_anim_player.bin
+0x8000 partition_table/partition-table.bin
+0x8d000 mmap_build/test_4bit/assets_4bit.bin
+0xf1000 mmap_build/test_8bit/assets_8bit.bin

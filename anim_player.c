@@ -196,7 +196,7 @@ static inline uint16_t anim_decoder_rgb888_to_rgb565(uint32_t color)
 static uint32_t get_color_from_palette(const image_header_t *header, uint8_t index)
 {
     const uint8_t *color = &header->palette[index * 4];
-    return (color[0] << 16) | (color[1] << 8) | color[2];
+    return (color[2] << 16) | (color[1] << 8) | color[0];
 }
 
 static esp_err_t anim_decoder_parse_image(const uint8_t *data, size_t data_len, image_header_t *header, anim_player_context_t *ctx)

@@ -5,6 +5,8 @@ import sys
 from PIL import Image
 import math
 from sklearn.cluster import KMeans
+import time
+from multiprocessing import Pool, cpu_count
 
 
 def floyd_steinberg_dithering(img, bit_depth=4):
@@ -39,6 +41,30 @@ def generate_palette(bit_depth=4):
         level = int(i * 255 / (num_colors - 1))
         palette.append((level, level, level, 0))  # (B, G, R, 0)
     return palette
+
+
+def process_row(args):
+    """Process a single row of pixels."""
+    y, pixels, width, bit_depth, palette, row_padded = args
+    row = []
+    if bit_depth == 4:
+        for x in range(0, width, 2):
+            p1 = pixels[y, x] // 17  # 0-15
+            if x + 1 < width:
+                p2 = pixels[y, x + 1] // 17
+            else:
+                p2 = 0
+            byte = (p1 << 4) | p2
+            row.append(byte)
+    else:  # 8-bit
+        for x in range(width):
+            color = pixels[y, x]
+            index = find_closest_color(color, palette)
+            row.append(index)
+    
+    while len(row) < row_padded:
+        row.append(0)  # padding
+    return row
 
 
 def save_bmp(filename, pixels, bit_depth=4):
@@ -94,28 +120,26 @@ def save_bmp(filename, pixels, bit_depth=4):
     palette_data = b''.join(struct.pack('<BBBB', *color) for color in palette)
 
     # Pixel Data
+    # Start timing
+    start_time = time.time()
+    
+    # Prepare parallel processing arguments
+    process_args = [(y, pixels, width, bit_depth, palette, row_padded) 
+                   for y in range(height - 1, -1, -1)]
+    
+    # Use process pool for parallel processing
+    with Pool(processes=cpu_count()) as pool:
+        rows = pool.map(process_row, process_args)
+    
+    # Merge processing results
     pixel_data = bytearray()
-    for y in range(height - 1, -1, -1):
-        row = []
-        if bit_depth == 4:
-            for x in range(0, width, 2):
-                p1 = pixels[y, x] // 17  # 0-15
-                if x + 1 < width:
-                    p2 = pixels[y, x + 1] // 17
-                else:
-                    p2 = 0
-                byte = (p1 << 4) | p2
-                row.append(byte)
-        else:  # 8-bit
-            for x in range(width):
-                # For 8-bit color, find closest color in palette
-                color = pixels[y, x]
-                index = find_closest_color(color, palette)
-                row.append(index)
-        
-        while len(row) < row_padded:
-            row.append(0)  # padding
+    for row in rows:
         pixel_data.extend(row)
+
+    # End timing and print
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print(f"Processing completed: Image size {width}x{height}, Total time: {execution_time:.3f} seconds")
 
     with open(filename, 'wb') as f:
         f.write(bmp_header)
@@ -355,11 +379,39 @@ def find_palette_index(pixel_value, palette):
     return closest_index
 
 
+def process_block(args):
+    """Process a single block of pixels."""
+    top, bottom, width, height, pixels, bit_depth = args
+    block_height = bottom - top
+    block_data = bytearray()
+    
+    for y in range(block_height):
+        row_start = (top + y) * width
+        if bit_depth == 4:
+            # Pack two pixels into one byte
+            for x in range(0, width, 2):
+                p1 = pixels[row_start + x]  # Already 0-15 index value
+                if x + 1 < width:
+                    p2 = pixels[row_start + x + 1]
+                else:
+                    p2 = 0
+                packed_byte = (p1 << 4) | p2
+                block_data.append(packed_byte)
+        else:  # 8-bit
+            # Use pixel value directly as index
+            for x in range(width):
+                block_data.append(pixels[row_start + x])
+    
+    # RTE compress this block
+    compressed_block = rte_compress(block_data)
+    return compressed_block
+
+
 def split_bmp(im, block_size, input_dir=None, bit_depth=4):
     """Splits grayscale image into raw bitmap blocks with RTE compression.
     
     Args:
-        im: PIL Image object
+        im: PIL Image object (BMP file)
         block_size: Height of each block
         input_dir: Input directory (optional)
         bit_depth: Bit depth for the image (4 or 8)
@@ -370,55 +422,34 @@ def split_bmp(im, block_size, input_dir=None, bit_depth=4):
     width, height = im.size
     splits = math.ceil(height / block_size) if block_size else 1
 
-    # Generate palette
-    palette_bytes, palette = generate_palette_from_image(im, bit_depth)
+    # Read palette from file
+    palette_size = 2 ** bit_depth * 4  # Each palette entry is 4 bytes (B,G,R,A)
+    with open(im.filename, 'rb') as f:
+        f.seek(54)  # Skip BMP header (14 + 40 bytes)
+        palette_bytes = f.read(palette_size)
 
-    # Convert image mode based on bit depth
-    if bit_depth == 4:
-        # For 4-bit images, convert to grayscale
-        if im.mode != 'L':
-            im = im.convert('L')
-        pixels = list(im.getdata())
-    else:
-        # For 8-bit images, keep RGB mode
-        if im.mode != 'RGB':
-            im = im.convert('RGB')
-        pixels = list(im.getdata())
+    # Read pixel data
+    pixels = list(im.getdata())
+    row_size = (width * bit_depth + 7) // 8
+    row_padded = (row_size + 3) & ~3  # 4-byte align each row
 
-    # Split into blocks and RTE compress
-    split_data = bytearray()
-    lenbuf = []
-
+    # Prepare parallel processing arguments
+    process_args = []
     for i in range(splits):
         top = i * block_size
         bottom = min((i + 1) * block_size, height)
-        block_height = bottom - top
+        process_args.append((top, bottom, width, height, pixels, bit_depth))
 
-        block_data = bytearray()
-        for y in range(block_height):
-            if bit_depth == 4:
-                for x in range(0, width, 2):
-                    # Pack two 4-bit pixels into one byte
-                    p1 = pixels[(top + y) * width + x] // 17  # 0-15
-                    if x + 1 < width:
-                        p2 = pixels[(top + y) * width + x + 1] // 17
-                    else:
-                        p2 = 0
-                    packed_byte = (p1 << 4) | p2
-                    block_data.append(packed_byte)
-            else:  # 8-bit
-                for x in range(width):
-                    # For 8-bit color, find closest color in palette
-                    color = pixels[(top + y) * width + x]
-                    index = find_closest_color(color, palette)
-                    block_data.append(index)
-
-        # RTE compress this block
-        compressed_block = rte_compress(block_data)
-
-        # Save compressed block
-        split_data.extend(compressed_block)
-        lenbuf.append(len(compressed_block))
+    # Use process pool for parallel processing
+    split_data = bytearray()
+    lenbuf = []
+    with Pool(processes=cpu_count()) as pool:
+        compressed_blocks = pool.map(process_block, process_args)
+        
+        # Collect processing results
+        for compressed_block in compressed_blocks:
+            split_data.extend(compressed_block)
+            lenbuf.append(len(compressed_block))
 
     return width, height, splits, palette_bytes, split_data, lenbuf
 

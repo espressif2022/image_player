@@ -1,1 +1,0 @@
-Command: cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=/home/xuxin/.espressif/python_env/idf5.5_py3.10_env/bin/python -DESP_PLATFORM=1 -DCCACHE_ENABLE=0 /home/xuxin/esp_work/esp-hi/components/anim_player/test_apps

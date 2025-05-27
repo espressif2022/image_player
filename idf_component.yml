@@ -1,4 +1,4 @@
-version: "1.0.0~1"
+version: "1.1.0"
 description: An image rendering component for ESP-IDF, optimized for efficient playback.
 url: https://github.com/espressif2022/image_player
 repository: "https://github.com/espressif2022/image_player.git"
@@ -7,7 +7,5 @@ issues: "https://github.com/espressif2022/image_player/issues" #
 dependencies:
   cmake_utilities:
     version: 0.*
-  esp_mmap_assets:
-    version: 1.*
   idf:
     version: '>=5.0'

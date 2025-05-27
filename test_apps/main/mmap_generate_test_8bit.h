@@ -13,18 +13,34 @@
 
 #include "esp_mmap_assets.h"
 
-#define MMAP_TEST_8BIT_FILES           10
-#define MMAP_TEST_8BIT_CHECKSUM        0x7472
+#define MMAP_TEST_8BIT_FILES           26
+#define MMAP_TEST_8BIT_CHECKSUM        0x2277
 
 enum MMAP_TEST_8BIT_LISTS {
-    MMAP_TEST_8BIT_CONNECTING_0000_SBMP = 0,        /*!< connecting_0000.sbmp */
-    MMAP_TEST_8BIT_CONNECTING_0001_SBMP = 1,        /*!< connecting_0001.sbmp */
-    MMAP_TEST_8BIT_CONNECTING_0002_SBMP = 2,        /*!< connecting_0002.sbmp */
-    MMAP_TEST_8BIT_CONNECTING_0003_SBMP = 3,        /*!< connecting_0003.sbmp */
-    MMAP_TEST_8BIT_CONNECTING_0004_SBMP = 4,        /*!< connecting_0004.sbmp */
-    MMAP_TEST_8BIT_CONNECTING_0005_SBMP = 5,        /*!< connecting_0005.sbmp */
-    MMAP_TEST_8BIT_CONNECTING_0006_SBMP = 6,        /*!< connecting_0006.sbmp */
-    MMAP_TEST_8BIT_CONNECTING_0007_SBMP = 7,        /*!< connecting_0007.sbmp */
-    MMAP_TEST_8BIT_CONNECTING_0008_SBMP = 8,        /*!< connecting_0008.sbmp */
-    MMAP_TEST_8BIT_CONNECTING_0009_SBMP = 9,        /*!< connecting_0009.sbmp */
+    MMAP_TEST_8BIT_ANGER_ENTER_AAF = 0,        /*!< Anger_enter.aaf */
+    MMAP_TEST_8BIT_ANGER_LOOP_AAF = 1,        /*!< Anger_loop.aaf */
+    MMAP_TEST_8BIT_ANGER_RETURN_AAF = 2,        /*!< Anger_return.aaf */
+    MMAP_TEST_8BIT_ASKING_AAF = 3,        /*!< asking.aaf */
+    MMAP_TEST_8BIT_BLINK_ONCE_AAF = 4,        /*!< blink_once.aaf */
+    MMAP_TEST_8BIT_BLINK_QUICK_AAF = 5,        /*!< blink_quick.aaf */
+    MMAP_TEST_8BIT_CONNECTING_AAF = 6,        /*!< connecting.aaf */
+    MMAP_TEST_8BIT_HAPP_RETURN_AAF = 7,        /*!< happ_return.aaf */
+    MMAP_TEST_8BIT_HAPPY_ENTER_AAF = 8,        /*!< happy_enter.aaf */
+    MMAP_TEST_8BIT_HAPPY_LOOP_AAF = 9,        /*!< happy_loop.aaf */
+    MMAP_TEST_8BIT_LEFT_ENTER_AAF = 10,        /*!< left_enter.aaf */
+    MMAP_TEST_8BIT_LEFT_LOOP_AAF = 11,        /*!< left_loop.aaf */
+    MMAP_TEST_8BIT_LEFT_RETURN_AAF = 12,        /*!< left_return.aaf */
+    MMAP_TEST_8BIT_PANIC_ENTER_AAF = 13,        /*!< panic_enter.aaf */
+    MMAP_TEST_8BIT_PANIC_LOOP_AAF = 14,        /*!< panic_loop.aaf */
+    MMAP_TEST_8BIT_PANIC_RETURN_AAF = 15,        /*!< panic_return.aaf */
+    MMAP_TEST_8BIT_RIGHT_ENTER_AAF = 16,        /*!< right_enter.aaf */
+    MMAP_TEST_8BIT_RIGHT_LOOP_AAF = 17,        /*!< right_loop.aaf */
+    MMAP_TEST_8BIT_RIGHT_RETURN_AAF = 18,        /*!< right_return.aaf */
+    MMAP_TEST_8BIT_SAD_ENTER_AAF = 19,        /*!< sad_enter.aaf */
+    MMAP_TEST_8BIT_SAD_LOOP_AAF = 20,        /*!< sad_loop.aaf */
+    MMAP_TEST_8BIT_SAD_RETURN_AAF = 21,        /*!< sad_return.aaf */
+    MMAP_TEST_8BIT_SCORN_ENTER_AAF = 22,        /*!< scorn_enter.aaf */
+    MMAP_TEST_8BIT_SCORN_LOOP_AAF = 23,        /*!< scorn_loop.aaf */
+    MMAP_TEST_8BIT_SCORN_RETURN_AAF = 24,        /*!< scorn_return.aaf */
+    MMAP_TEST_8BIT_WAKE_AAF = 25,        /*!< wake.aaf */
 };

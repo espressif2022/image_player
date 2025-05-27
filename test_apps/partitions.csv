@@ -3,5 +3,5 @@
 nvs,      data, nvs,     ,  0x6000,
 phy_init, data, phy,     ,  0x1000,
 factory,  app,  factory, , 500K,
-assets_4bit,   data, spiffs,  , 400K,
-assets_8bit,   data, spiffs,  , 400K,
+assets_4bit,   data, spiffs,  , 300K,
+assets_8bit,   data, spiffs,  , 700K,

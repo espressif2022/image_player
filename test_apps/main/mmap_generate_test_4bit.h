@@ -13,15 +13,34 @@
 
 #include "esp_mmap_assets.h"
 
-#define MMAP_TEST_4BIT_FILES           7
-#define MMAP_TEST_4BIT_CHECKSUM        0x5F08
+#define MMAP_TEST_4BIT_FILES           26
+#define MMAP_TEST_4BIT_CHECKSUM        0x951D
 
 enum MMAP_TEST_4BIT_LISTS {
-    MMAP_TEST_4BIT_B0001_SBMP = 0,        /*!< b0001.sbmp */
-    MMAP_TEST_4BIT_B0002_SBMP = 1,        /*!< b0002.sbmp */
-    MMAP_TEST_4BIT_B0003_SBMP = 2,        /*!< b0003.sbmp */
-    MMAP_TEST_4BIT_B0004_SBMP = 3,        /*!< b0004.sbmp */
-    MMAP_TEST_4BIT_B0005_SBMP = 4,        /*!< b0005.sbmp */
-    MMAP_TEST_4BIT_B0006_SBMP = 5,        /*!< b0006.sbmp */
-    MMAP_TEST_4BIT_B0007_SBMP = 6,        /*!< b0007.sbmp */
+    MMAP_TEST_4BIT_ANGER_ENTER_AAF = 0,        /*!< Anger_enter.aaf */
+    MMAP_TEST_4BIT_ANGER_LOOP_AAF = 1,        /*!< Anger_loop.aaf */
+    MMAP_TEST_4BIT_ANGER_RETURN_AAF = 2,        /*!< Anger_return.aaf */
+    MMAP_TEST_4BIT_ASKING_AAF = 3,        /*!< asking.aaf */
+    MMAP_TEST_4BIT_BLINK_ONCE_AAF = 4,        /*!< blink_once.aaf */
+    MMAP_TEST_4BIT_BLINK_QUICK_AAF = 5,        /*!< blink_quick.aaf */
+    MMAP_TEST_4BIT_CONNECTING_AAF = 6,        /*!< connecting.aaf */
+    MMAP_TEST_4BIT_HAPP_RETURN_AAF = 7,        /*!< happ_return.aaf */
+    MMAP_TEST_4BIT_HAPPY_ENTER_AAF = 8,        /*!< happy_enter.aaf */
+    MMAP_TEST_4BIT_HAPPY_LOOP_AAF = 9,        /*!< happy_loop.aaf */
+    MMAP_TEST_4BIT_LEFT_ENTER_AAF = 10,        /*!< left_enter.aaf */
+    MMAP_TEST_4BIT_LEFT_LOOP_AAF = 11,        /*!< left_loop.aaf */
+    MMAP_TEST_4BIT_LEFT_RETURN_AAF = 12,        /*!< left_return.aaf */
+    MMAP_TEST_4BIT_PANIC_ENTER_AAF = 13,        /*!< panic_enter.aaf */
+    MMAP_TEST_4BIT_PANIC_LOOP_AAF = 14,        /*!< panic_loop.aaf */
+    MMAP_TEST_4BIT_PANIC_RETURN_AAF = 15,        /*!< panic_return.aaf */
+    MMAP_TEST_4BIT_RIGHT_ENTER_AAF = 16,        /*!< right_enter.aaf */
+    MMAP_TEST_4BIT_RIGHT_LOOP_AAF = 17,        /*!< right_loop.aaf */
+    MMAP_TEST_4BIT_RIGHT_RETURN_AAF = 18,        /*!< right_return.aaf */
+    MMAP_TEST_4BIT_SAD_ENTER_AAF = 19,        /*!< sad_enter.aaf */
+    MMAP_TEST_4BIT_SAD_LOOP_AAF = 20,        /*!< sad_loop.aaf */
+    MMAP_TEST_4BIT_SAD_RETURN_AAF = 21,        /*!< sad_return.aaf */
+    MMAP_TEST_4BIT_SCORN_ENTER_AAF = 22,        /*!< scorn_enter.aaf */
+    MMAP_TEST_4BIT_SCORN_LOOP_AAF = 23,        /*!< scorn_loop.aaf */
+    MMAP_TEST_4BIT_SCORN_RETURN_AAF = 24,        /*!< scorn_return.aaf */
+    MMAP_TEST_4BIT_WAKE_AAF = 25,        /*!< wake.aaf */
 };

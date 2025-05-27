@@ -1,4 +1,5 @@
 idf_component_register(
-    SRCS "anim_player.c"
+    SRC_DIRS "."
     INCLUDE_DIRS "include"
+    PRIV_INCLUDE_DIRS "./include_priv"
 )

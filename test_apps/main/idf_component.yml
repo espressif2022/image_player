@@ -5,3 +5,5 @@ dependencies:
     version: '*'
     override_path: ../../
   espressif/esp-box: ^3.1.0~1
+  esp_mmap_assets:
+    version: 1.*

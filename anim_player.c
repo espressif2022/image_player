@@ -5,23 +5,22 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_check.h"
-#include "esp_mmap_assets.h"
 #include "anim_player.h"
+#include "anim_vfs.h"
+#include "anim_dec.h"
 
 static const char *TAG = "anim_player";
 
 #define NEED_DELETE     BIT0
 #define DELETE_DONE     BIT1
 #define WAIT_FLUSH_DONE BIT2
+#define WAIT_STOP       BIT3
+#define WAIT_STOP_DONE  BIT4
 
 #define FPS_TO_MS(fps) (1000 / (fps))  // Convert FPS to milliseconds
 
 typedef struct {
-    player_event_t action;
-    int start_index;
-    int end_index;
-    bool repeat;
-    int fps;
+    player_action_t action;
 } anim_player_event_t;
 
 typedef struct {
@@ -29,177 +28,44 @@ typedef struct {
     QueueHandle_t event_queue;
 } anim_player_events_t;
 
-// Image format types
-typedef enum {
-    IMAGE_FORMAT_SBMP = 0,  // Split BMP format
-    IMAGE_FORMAT_REDIRECT = 1,  // Redirect format
-    IMAGE_FORMAT_INVALID = 2
-} image_format_t;
-
-// Image header structure
 typedef struct {
-    char format[3];        // Format identifier (e.g., "_S")
-    char version[6];       // Version string
-    uint8_t bit_depth;     // Bit depth (4 or 8)
-    uint16_t width;        // Image width
-    uint16_t height;       // Image height
-    uint16_t splits;       // Number of splits
-    uint16_t split_height; // Height of each split
-    uint16_t *split_lengths; // Data length of each split
-    uint16_t data_offset;  // Offset to data segment
-    uint8_t *palette;      // Color palette (dynamically allocated)
-    int num_colors;        // Number of colors in palette
-} image_header_t;
+    uint32_t start;
+    uint32_t end;
+    anim_vfs_handle_t file_desc;
+} anim_player_info_t;
 
 // Animation player context
 typedef struct {
-    player_event_t action;
-    int start_index;
-    int end_index;
+    anim_player_info_t info;
+    int run_start;
+    int run_end;
     bool repeat;
-    int fps;            // Frame rate (frames per second)
-    mmap_assets_handle_t assets_handle;
-    flush_cb_t flush_callback;
+    int fps;
+    anim_flush_cb_t flush_cb;
+    anim_update_cb_t update_cb;
+    void *user_data;
     anim_player_events_t events;
     TaskHandle_t handle_task;
-    uint32_t last_frame_time;
+    struct {
+        unsigned char swap: 1;
+    } flags;
 } anim_player_context_t;
 
-static image_format_t anim_decoder_parse_header(const uint8_t *data, size_t data_len, image_header_t *header)
-{
-    // Initialize header fields
-    memset(header, 0, sizeof(image_header_t));
+typedef struct {
+    player_action_t action;
+    int run_start;
+    int run_end;
+    bool repeat;
+    int fps;
+    uint32_t last_frame_time;
+} anim_player_run_ctx_t;
 
-    // Read format identifier
-    memcpy(header->format, data, 2);
-    header->format[2] = '\0';
-
-    if (strncmp(header->format, "_S", 2) == 0) {
-        // Parse format
-        memcpy(header->version, data + 3, 6);
-
-        // Read bit depth
-        header->bit_depth = data[9];
-
-        // Validate bit depth
-        if (header->bit_depth != 4 && header->bit_depth != 8) {
-            ESP_LOGE(TAG, "Invalid bit depth: %d", header->bit_depth);
-            return IMAGE_FORMAT_INVALID;
-        }
-
-        header->width = *(uint16_t *)(data + 10);
-        header->height = *(uint16_t *)(data + 12);
-        header->splits = *(uint16_t *)(data + 14);
-        header->split_height = *(uint16_t *)(data + 16);
-
-        // Allocate and read split lengths
-        header->split_lengths = (uint16_t *)malloc(header->splits * sizeof(uint16_t));
-        if (header->split_lengths == NULL) {
-            ESP_LOGE(TAG, "Failed to allocate memory for split lengths");
-            return IMAGE_FORMAT_INVALID;
-        }
-
-        for (int i = 0; i < header->splits; i++) {
-            header->split_lengths[i] = *(uint16_t *)(data + 18 + i * 2);
-        }
-
-        // Calculate number of colors based on bit depth
-        header->num_colors = 1 << header->bit_depth;
-
-        // Allocate and read color palette
-        header->palette = (uint8_t *)malloc(header->num_colors * 4);
-        if (header->palette == NULL) {
-            ESP_LOGE(TAG, "Failed to allocate memory for palette");
-            free(header->split_lengths);
-            header->split_lengths = NULL;
-            return IMAGE_FORMAT_INVALID;
-        }
-
-        // Read palette data
-        memcpy(header->palette, data + 18 + header->splits * 2, header->num_colors * 4);
-
-        header->data_offset = 18 + header->splits * 2 + header->num_colors * 4;
-        return IMAGE_FORMAT_SBMP;
-
-    } else if (strncmp(header->format, "_R", 2) == 0) {
-        // Parse redirect format
-        uint8_t file_length = *(uint8_t *)(data + 2);
-
-        // For redirect format, we'll use the palette field to store the filename
-        header->palette = (uint8_t *)malloc(file_length + 1);
-        if (header->palette == NULL) {
-            ESP_LOGE(TAG, "Failed to allocate memory for redirect filename");
-            return IMAGE_FORMAT_INVALID;
-        }
-
-        // Copy filename to palette buffer
-        memcpy(header->palette, data + 3, file_length);
-        header->palette[file_length] = '\0';  // Ensure null termination
-        header->num_colors = file_length + 1;
-
-        return IMAGE_FORMAT_REDIRECT;
-
-    } else {
-        ESP_LOGE(TAG, "Invalid format: %s", header->format);
-        printf("%02X %02X %02X\r\n", header->format[0], header->format[1], header->format[2]);
-        return IMAGE_FORMAT_INVALID;
-    }
-}
-
-static void anim_decoder_calculate_offsets(const image_header_t *header, uint16_t *offsets)
-{
-    offsets[0] = header->data_offset;
-    for (int i = 1; i < header->splits; i++) {
-        offsets[i] = offsets[i - 1] + header->split_lengths[i - 1];
-    }
-}
-
-static void anim_decoder_free_header(image_header_t *header)
-{
-    if (header->split_lengths != NULL) {
-        free(header->split_lengths);
-        header->split_lengths = NULL;
-    }
-    if (header->palette != NULL) {
-        free(header->palette);
-        header->palette = NULL;
-    }
-}
-
-static esp_err_t anim_decoder_rle_decode(const uint8_t *input, size_t input_len, uint8_t *output, size_t output_len)
-{
-    size_t in_pos = 0;
-    size_t out_pos = 0;
-
-    while (in_pos + 1 <= input_len) {
-        uint8_t count = input[in_pos++];
-        uint8_t value = input[in_pos++];
-
-        if (out_pos + count > output_len) {
-            ESP_LOGE(TAG, "Output buffer overflow");
-            return ESP_FAIL;
-        }
-
-        for (uint8_t i = 0; i < count; i++) {
-            output[out_pos++] = value;
-        }
-    }
-
-    return ESP_OK;
-}
-
-static inline uint16_t anim_decoder_rgb888_to_rgb565(uint32_t color)
+static inline uint16_t rgb888_to_rgb565(uint32_t color)
 {
     return (((color >> 16) & 0xF8) << 8) | (((color >> 8) & 0xFC) << 3) | ((color & 0xF8) >> 3);
 }
 
-static uint32_t get_color_from_palette(const image_header_t *header, uint8_t index)
-{
-    const uint8_t *color = &header->palette[index * 4];
-    return (color[2] << 16) | (color[1] << 8) | color[0];
-}
-
-static esp_err_t anim_decoder_parse_image(const uint8_t *data, size_t data_len, image_header_t *header, anim_player_context_t *ctx)
+static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_header_t *header, anim_player_context_t *ctx)
 {
     // Allocate memory for split offsets
     uint16_t *offsets = (uint16_t *)malloc(header->splits * sizeof(uint16_t));
@@ -208,7 +74,7 @@ static esp_err_t anim_decoder_parse_image(const uint8_t *data, size_t data_len, 
         return ESP_FAIL;
     }
 
-    anim_decoder_calculate_offsets(header, offsets);
+    anim_dec_calculate_offsets(header, offsets);
 
     // Allocate frame buffer
     void *frame_buffer = malloc(header->width * header->split_height * sizeof(uint16_t));
@@ -219,9 +85,10 @@ static esp_err_t anim_decoder_parse_image(const uint8_t *data, size_t data_len, 
     }
 
     // Allocate decode buffer
-    uint8_t *decode_buffer  = NULL;
+    uint8_t *decode_buffer = NULL;
     if (header->bit_depth == 4) {
-        decode_buffer = (uint8_t *)malloc(header->width * header->split_height / 2);
+        ESP_LOGI(TAG, "4bit, width:%d, split_height:%d, %d", header->width, header->split_height, (header->split_height + (header->split_height % 2)) / 2);
+        decode_buffer = (uint8_t *)malloc(header->width * (header->split_height + (header->split_height % 2)) / 2);
     } else if (header->bit_depth == 8) {
         decode_buffer = (uint8_t *)malloc(header->width * header->split_height);
     }
@@ -239,8 +106,41 @@ static esp_err_t anim_decoder_parse_image(const uint8_t *data, size_t data_len, 
         const uint8_t *compressed_data = data + offsets[split];
         int compressed_len = header->split_lengths[split];
 
-        // Decode compressed data
-        if (anim_decoder_rle_decode(compressed_data, compressed_len, decode_buffer, header->width * header->split_height) != ESP_OK) {
+        esp_err_t decode_result = ESP_FAIL;
+        uint32_t valid_height;
+
+        if (split == header->splits - 1) {
+            valid_height = header->height - split * header->split_height;
+        } else {
+            valid_height = header->split_height;
+        }
+        ESP_LOGD(TAG, "split:%d(%d), height:%d(%d), compressed_len:%d", split, header->splits, header->split_height, valid_height, compressed_len);
+
+        // Check encoding type from first byte
+        if (compressed_data[0] == ENCODING_TYPE_RLE) {
+            decode_result = anim_dec_rte_decode(compressed_data + 1, compressed_len - 1,
+                                                decode_buffer, header->width * header->split_height);
+        } else if (compressed_data[0] == ENCODING_TYPE_HUFFMAN) {
+            uint8_t *huffman_buffer = malloc(header->width * header->split_height);
+            if (huffman_buffer == NULL) {
+                ESP_LOGE(TAG, "Failed to allocate memory for Huffman buffer");
+                continue;
+            }
+
+            size_t huffman_decoded_len = 0;
+            anim_dec_huffman_decode(compressed_data, compressed_len, huffman_buffer, &huffman_decoded_len);
+            decode_result = ESP_OK;
+            if (decode_result == ESP_OK) {
+                decode_result = anim_dec_rte_decode(huffman_buffer, huffman_decoded_len,
+                                                    decode_buffer, header->width * header->split_height);
+            }
+            free(huffman_buffer);
+        } else {
+            ESP_LOGE(TAG, "Unknown encoding type: %02X", compressed_data[0]);
+            continue;
+        }
+
+        if (decode_result != ESP_OK) {
             ESP_LOGE(TAG, "Failed to decode split %d", split);
             continue;
         }
@@ -248,28 +148,28 @@ static esp_err_t anim_decoder_parse_image(const uint8_t *data, size_t data_len, 
         // Convert to RGB565 based on bit depth
         if (header->bit_depth == 4) {
             // 4-bit mode: each byte contains two pixels
-            for (int y = 0; y < header->split_height; y++) {
+            for (int y = 0; y < valid_height; y++) {
                 for (int x = 0; x < header->width; x += 2) {
                     uint8_t packed_gray = decode_buffer[y * (header->width / 2) + (x / 2)];
                     uint8_t index1 = (packed_gray & 0xF0) >> 4;
                     uint8_t index2 = (packed_gray & 0x0F);
 
-                    uint32_t color1 = get_color_from_palette(header, index1);
-                    uint32_t color2 = get_color_from_palette(header, index2);
+                    uint32_t color1 = anim_dec_parse_palette(header, index1);
+                    uint32_t color2 = anim_dec_parse_palette(header, index2);
 
-                    pixels[y * header->width + x] = __builtin_bswap16(anim_decoder_rgb888_to_rgb565(color1));
+                    pixels[y * header->width + x] = ctx->flags.swap ? __builtin_bswap16(rgb888_to_rgb565(color1)) : rgb888_to_rgb565(color1);
                     if (x + 1 < header->width) {
-                        pixels[y * header->width + x + 1] = __builtin_bswap16(anim_decoder_rgb888_to_rgb565(color2));
+                        pixels[y * header->width + x + 1] = ctx->flags.swap ? __builtin_bswap16(rgb888_to_rgb565(color2)) : rgb888_to_rgb565(color2);
                     }
                 }
             }
         } else if (header->bit_depth == 8) {
             // 8-bit mode: each byte is one pixel
-            for (int y = 0; y < header->split_height; y++) {
+            for (int y = 0; y < valid_height; y++) {
                 for (int x = 0; x < header->width; x++) {
                     uint8_t index = decode_buffer[y * header->width + x];
-                    uint32_t color = get_color_from_palette(header, index);
-                    pixels[y * header->width + x] = __builtin_bswap16(anim_decoder_rgb888_to_rgb565(color));
+                    uint32_t color = anim_dec_parse_palette(header, index);
+                    pixels[y * header->width + x] = ctx->flags.swap ? __builtin_bswap16(rgb888_to_rgb565(color)) : rgb888_to_rgb565(color);
                 }
             }
         } else {
@@ -279,7 +179,10 @@ static esp_err_t anim_decoder_parse_image(const uint8_t *data, size_t data_len, 
 
         // Flush decoded data
         xEventGroupClearBits(ctx->events.event_group, WAIT_FLUSH_DONE);
-        ctx->flush_callback(0, split * header->split_height, header->width, (split + 1) * header->split_height, pixels);
+
+        if (ctx->flush_cb) {
+            ctx->flush_cb(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, pixels);
+        }
         xEventGroupWaitBits(ctx->events.event_group, WAIT_FLUSH_DONE, pdTRUE, pdFALSE, pdMS_TO_TICKS(20));
     }
 
@@ -287,32 +190,29 @@ static esp_err_t anim_decoder_parse_image(const uint8_t *data, size_t data_len, 
     free(offsets);
     free(frame_buffer);
     free(decode_buffer);
-    anim_decoder_free_header(header);
+    anim_dec_free_header(header);
 
     return ESP_OK;
-}
-
-static int16_t anim_decoder_find_asset(mmap_assets_handle_t handle, const char *name)
-{
-    for (int i = 0; i < mmap_assets_get_stored_files(handle); i++) {
-        const void *asset_name = mmap_assets_get_name(handle, i);
-        if (strcmp(asset_name, name) == 0) {
-            return i;
-        }
-    }
-    return -1;
 }
 
 static void anim_player_task(void *arg)
 {
     image_header_t header;
     anim_player_context_t *ctx = (anim_player_context_t *)arg;
-    ctx->last_frame_time = xTaskGetTickCount();
+    anim_player_run_ctx_t run_ctx;
+
     anim_player_event_t player_event;
+
+    run_ctx.action = PLAYER_ACTION_STOP;
+    run_ctx.run_start = ctx->run_start;
+    run_ctx.run_end = ctx->run_end;
+    run_ctx.repeat = ctx->repeat;
+    run_ctx.fps = ctx->fps;
+    run_ctx.last_frame_time = xTaskGetTickCount();
 
     while (1) {
         EventBits_t bits = xEventGroupWaitBits(ctx->events.event_group,
-                                               NEED_DELETE,
+                                               NEED_DELETE | WAIT_STOP,
                                                pdTRUE, pdFALSE, pdMS_TO_TICKS(10));
 
         if (bits & NEED_DELETE) {
@@ -321,84 +221,95 @@ static void anim_player_task(void *arg)
             vTaskDelete(NULL);
         }
 
-        // Check for new events in queue
-        if (xQueueReceive(ctx->events.event_queue, &player_event, 0) == pdTRUE) {
-            ctx->action = player_event.action;
-            ctx->start_index = player_event.start_index;
-            ctx->end_index = player_event.end_index;
-            ctx->repeat = player_event.repeat;
-            ctx->fps = player_event.fps;
-            ESP_LOGI(TAG, "Player updated: %d -> %d, repeat:%d, fps:%d",
-                     ctx->start_index, ctx->end_index, ctx->repeat, ctx->fps);
+        if (bits & WAIT_STOP) {
+            xEventGroupSetBits(ctx->events.event_group, WAIT_STOP_DONE);
         }
 
-        if (ctx->action == PLAYER_ACTION_STOP) {
+        // Check for new events in queue
+        if (xQueueReceive(ctx->events.event_queue, &player_event, 0) == pdTRUE) {
+            run_ctx.action = player_event.action;
+            run_ctx.run_start = ctx->run_start;
+            run_ctx.run_end = ctx->run_end;
+            run_ctx.repeat = ctx->repeat;
+            run_ctx.fps = ctx->fps;
+            ESP_LOGD(TAG, "Player updated [%s]: %d -> %d, repeat:%d, fps:%d",
+                     run_ctx.action == PLAYER_ACTION_START ? "START" : "STOP",
+                     run_ctx.run_start, run_ctx.run_end, run_ctx.repeat, run_ctx.fps);
+        }
+
+        if (run_ctx.action == PLAYER_ACTION_STOP) {
             continue;
         }
 
         // Process animation frames
         do {
-            for (int i = ctx->start_index; (i <= ctx->end_index) && (ctx->action != PLAYER_ACTION_STOP); i++) {
+            for (int i = run_ctx.run_start; (i <= run_ctx.run_end) && (run_ctx.action != PLAYER_ACTION_STOP); i++) {
                 // Frame rate control
                 uint32_t current_time = xTaskGetTickCount();
-                uint32_t elapsed = current_time - ctx->last_frame_time;
-                if (elapsed < pdMS_TO_TICKS(FPS_TO_MS(ctx->fps))) {
-                    vTaskDelay(pdMS_TO_TICKS(FPS_TO_MS(ctx->fps)) - elapsed);
+                uint32_t elapsed = current_time - run_ctx.last_frame_time;
+                if (elapsed < pdMS_TO_TICKS(FPS_TO_MS(run_ctx.fps))) {
+                    vTaskDelay(pdMS_TO_TICKS(FPS_TO_MS(run_ctx.fps)) - elapsed);
                 }
-                ctx->last_frame_time = xTaskGetTickCount();
+                run_ctx.last_frame_time = xTaskGetTickCount();
 
-                const void *frame_data = mmap_assets_get_mem(ctx->assets_handle, i);
-                size_t frame_size = mmap_assets_get_size(ctx->assets_handle, i);
+                // Check for new events or delete request
+                bits = xEventGroupWaitBits(ctx->events.event_group,
+                                           NEED_DELETE | WAIT_STOP,
+                                           pdTRUE, pdFALSE, pdMS_TO_TICKS(0));
+                if (bits & NEED_DELETE) {
+                    ESP_LOGW(TAG, "Playing deleted");
+                    xEventGroupSetBits(ctx->events.event_group, DELETE_DONE);
+                    vTaskDelete(NULL);
+                }
+                if (bits & WAIT_STOP) {
+                    xEventGroupSetBits(ctx->events.event_group, WAIT_STOP_DONE);
+                }
 
-                image_format_t format = anim_decoder_parse_header(frame_data, frame_size, &header);
+                if (xQueueReceive(ctx->events.event_queue, &player_event, 0) == pdTRUE) {
+                    run_ctx.action = player_event.action;
+                    run_ctx.run_start = ctx->run_start;
+                    run_ctx.run_end = ctx->run_end;
+                    run_ctx.fps = ctx->fps;
+                    if (run_ctx.action == PLAYER_ACTION_STOP) {
+                        run_ctx.repeat = false;
+                    } else {
+                        run_ctx.repeat = ctx->repeat;
+                    }
+
+                    ESP_LOGD(TAG, "Playing updated [%s]: %d -> %d, repeat:%d, fps:%d",
+                             run_ctx.action == PLAYER_ACTION_START ? "START" : "STOP",
+                             run_ctx.run_start, run_ctx.run_end, run_ctx.repeat, run_ctx.fps);
+                    break;
+                }
+
+                const void *frame_data = anim_vfs_get_frame_data(ctx->info.file_desc, i);
+                size_t frame_size = anim_vfs_get_frame_size(ctx->info.file_desc, i);
+
+                image_format_t format = anim_dec_parse_header(frame_data, frame_size, &header);
 
                 if (format == IMAGE_FORMAT_INVALID) {
                     ESP_LOGE(TAG, "Invalid frame format");
                     continue;
                 } else if (format == IMAGE_FORMAT_REDIRECT) {
-                    // Use the palette buffer as the filename
-                    const char *name = (const char *)header.palette;
-                    int16_t new_index = anim_decoder_find_asset(ctx->assets_handle, name);
-                    free(header.palette);
-
-                    if (new_index < mmap_assets_get_stored_files(ctx->assets_handle) && new_index >= 0) {
-                        frame_data = mmap_assets_get_mem(ctx->assets_handle, new_index);
-                        frame_size = mmap_assets_get_size(ctx->assets_handle, new_index);
-                        format = anim_decoder_parse_header(frame_data, frame_size, &header);
-
-                        if (format == IMAGE_FORMAT_SBMP) {
-                            anim_decoder_parse_image(frame_data, frame_size, &header, ctx);
-                        }
-                    }
+                    ESP_LOGE(TAG, "Invalid redirect frame");
                     continue;
                 } else if (format == IMAGE_FORMAT_SBMP) {
-                    anim_decoder_parse_image(frame_data, frame_size, &header, ctx);
-                }
-
-                // Check for new events or delete request
-                bits = xEventGroupWaitBits(ctx->events.event_group,
-                                           NEED_DELETE,
-                                           pdTRUE, pdFALSE, pdMS_TO_TICKS(0));
-                if (bits & NEED_DELETE) {
-                    ESP_LOGW(TAG, "Player deleted");
-                    xEventGroupSetBits(ctx->events.event_group, DELETE_DONE);
-                    vTaskDelete(NULL);
-                }
-
-                if (xQueueReceive(ctx->events.event_queue, &player_event, 0) == pdTRUE) {
-                    ctx->action = player_event.action;
-                    ctx->start_index = player_event.start_index;
-                    ctx->end_index = player_event.end_index;
-                    ctx->repeat = player_event.repeat;
-                    ctx->fps = player_event.fps;
-                    ESP_LOGI(TAG, "Player updated: %d -> %d, repeat:%d, fps:%d",
-                             ctx->start_index, ctx->end_index, ctx->repeat, ctx->fps);
-                    break;
+                    anim_player_parse(frame_data, frame_size, &header, ctx);
+                    if (ctx->update_cb) {
+                        ctx->update_cb(ctx, PLAYER_EVENT_ONE_FRAME_DONE);
+                    }
                 }
             }
-        } while (ctx->repeat);
+            if (ctx->update_cb) {
+                ctx->update_cb(ctx, PLAYER_EVENT_ALL_FRAME_DONE);
+            }
+        } while (run_ctx.repeat);
 
-        ctx->action = PLAYER_ACTION_STOP;
+        run_ctx.action = PLAYER_ACTION_STOP;
+
+        if (ctx->update_cb) {
+            ctx->update_cb(ctx, PLAYER_EVENT_IDLE);
+        }
     }
 }
 
@@ -421,7 +332,7 @@ bool anim_player_flush_ready(anim_player_handle_t handle)
     }
 }
 
-void anim_player_update(anim_player_handle_t handle, player_event_t event, int start_index, int end_index, bool repeat, int fps)
+void anim_player_update(anim_player_handle_t handle, player_action_t event)
 {
     anim_player_context_t *ctx = (anim_player_context_t *)handle;
     if (ctx == NULL) {
@@ -431,15 +342,93 @@ void anim_player_update(anim_player_handle_t handle, player_event_t event, int s
 
     anim_player_event_t player_event = {
         .action = event,
-        .start_index = start_index,
-        .end_index = end_index,
-        .repeat = repeat,
-        .fps = fps
     };
 
     if (xQueueSend(ctx->events.event_queue, &player_event, pdMS_TO_TICKS(10)) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to send event to queue");
     }
+    // ESP_LOGW(TAG, "update event: %s", event == PLAYER_ACTION_START ? "START" : "STOP");
+}
+
+esp_err_t anim_player_set_src_data(anim_player_handle_t handle, const void *src_data, size_t src_len)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return ESP_FAIL;
+    }
+
+    anim_vfs_handle_t new_desc;
+    anim_vfs_init(src_data, src_len, &new_desc);
+    if (new_desc == NULL) {
+        ESP_LOGE(TAG, "Failed to initialize asset parser");
+        return ESP_FAIL;
+    }
+
+    anim_player_update(handle, PLAYER_ACTION_STOP);
+    xEventGroupSetBits(ctx->events.event_group, WAIT_STOP);
+    xEventGroupWaitBits(ctx->events.event_group, WAIT_STOP_DONE, pdTRUE, pdFALSE, portMAX_DELAY);
+
+    //delete old file_desc
+    if (ctx->info.file_desc) {
+        anim_vfs_deinit(ctx->info.file_desc);
+        ctx->info.file_desc = NULL;
+    }
+
+    ctx->info.file_desc = new_desc;
+    ctx->info.start = 0;
+    ctx->info.end = anim_vfs_get_total_frames(new_desc) - 1;
+
+    //default segment
+    ctx->run_start = ctx->info.start;
+    ctx->run_end = ctx->info.end;
+    ctx->repeat = true;
+    ctx->fps = CONFIG_ANIM_PLAYER_DEFAULT_FPS;
+
+    return ESP_OK;
+}
+
+void anim_player_get_segment(anim_player_handle_t handle, uint32_t *start, uint32_t *end)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return;
+    }
+
+    *start = ctx->info.start;
+    *end = ctx->info.end;
+}
+
+void anim_player_set_segment(anim_player_handle_t handle, uint32_t start, uint32_t end, uint32_t fps, bool repeat)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return;
+    }
+
+    if (end > ctx->info.end || (start > end)) {
+        ESP_LOGE(TAG, "Invalid segment");
+        return;
+    }
+
+    ctx->run_start = start;
+    ctx->run_end = end;
+    ctx->repeat = repeat;
+    ctx->fps = fps;
+    ESP_LOGI(TAG, "set segment: %d -> %d, repeat:%d, fps:%d", start, end, repeat, fps);
+}
+
+void *anim_player_get_user_data(anim_player_handle_t handle)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return NULL;
+    }
+
+    return ctx->user_data;
 }
 
 anim_player_handle_t anim_player_init(const anim_player_config_t *config)
@@ -455,32 +444,29 @@ anim_player_handle_t anim_player_init(const anim_player_config_t *config)
         return NULL;
     }
 
-    mmap_assets_handle_t assets_handle;
-    const mmap_assets_config_t asset_config = {
-        .partition_label = config->partition_label,
-        .max_files = config->max_files,
-        .checksum = config->checksum,
-        .flags = {.mmap_enable = true, .full_check = true}
-    };
-
-    esp_err_t ret = mmap_assets_new(&asset_config, &assets_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize assets");
-        free(player);
-        return NULL;
-    }
-
-    player->assets_handle = assets_handle;
-    player->action = PLAYER_ACTION_STOP;
-    player->start_index = 0;
-    player->end_index = 0;
+    player->info.file_desc = NULL;
+    player->info.start = 0;
+    player->info.end = 0;
+    player->run_start = 0;
+    player->run_end = 0;
     player->repeat = false;
     player->fps = CONFIG_ANIM_PLAYER_DEFAULT_FPS;
-    player->flush_callback = config->flush_cb;
+    player->flush_cb = config->flush_cb;
+    player->update_cb = config->update_cb;
+    player->user_data = config->user_data;
+    player->flags.swap = config->flags.swap;
     player->events.event_group = xEventGroupCreate();
     player->events.event_queue = xQueueCreate(5, sizeof(anim_player_event_t));
 
-    xTaskCreatePinnedToCore(anim_player_task, "Anim Player", 4 * 1024, player, 5, &player->handle_task, 0);
+    // Set default task configuration if not specified
+    // const uint32_t caps = config->task.task_stack_caps ? config->task.task_stack_caps : MALLOC_CAP_DEFAULT; // caps cannot be zero
+    if (config->task.task_affinity < 0) {
+        // xTaskCreateWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, caps);
+        xTaskCreate(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task);
+    } else {
+        // xTaskCreatePinnedToCoreWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, config->task.task_affinity, caps);
+        xTaskCreatePinnedToCore(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, config->task.task_affinity);
+    }
 
     return (anim_player_handle_t)player;
 }
@@ -511,10 +497,9 @@ void anim_player_deinit(anim_player_handle_t handle)
         ctx->events.event_queue = NULL;
     }
 
-    // Free assets
-    if (ctx->assets_handle) {
-        mmap_assets_del(ctx->assets_handle);
-        ctx->assets_handle = NULL;
+    if (ctx->info.file_desc) {
+        anim_vfs_deinit(ctx->info.file_desc);
+        ctx->info.file_desc = NULL;
     }
 
     // Free player context

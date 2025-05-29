@@ -14,7 +14,7 @@
 #include "esp_mmap_assets.h"
 
 #define MMAP_TEST_4BIT_FILES           26
-#define MMAP_TEST_4BIT_CHECKSUM        0x951D
+#define MMAP_TEST_4BIT_CHECKSUM        0x4F98
 
 enum MMAP_TEST_4BIT_LISTS {
     MMAP_TEST_4BIT_ANGER_ENTER_AAF = 0,        /*!< Anger_enter.aaf */

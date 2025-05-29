@@ -15,7 +15,7 @@ def setup_logging():
     """Setup logging configuration."""
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format='%(levelname)s - %(message)s',
         handlers=[
             logging.FileHandler('frame_merge.log'),
             logging.StreamHandler()
@@ -81,20 +81,21 @@ def pack_assets(config: PackModelsConfig):
                         original_frame = bin_data[3:3+filename_length].decode('utf-8')
                         original_frame_name, original_frame_num = get_frame_info(original_frame)
                         
-                        logging.info(f"Found repeated frame {frame_name}_{frame_number} referencing frame {original_frame_name}_{original_frame_num}")
+                        logging.info(f"Repeated {frame_name}_{frame_number} referencing {original_frame_name}_{original_frame_num}")
                         frame_info_list.append((frame_number, 0, file_size, True, original_frame_num))
                     except (ValueError, IndexError) as e:
                         logging.error(f"Invalid repeated frame format in {filename}: {str(e)}")
                     continue
 
                 # Process original frame
-                logging.info(f"Processing original frame {frame_name}_{frame_number} with size {file_size} bytes")
-                frame_info_list.append((frame_number, len(merged_data), file_size, False, None))
-                frame_map[frame_number] = (len(merged_data), file_size)
-                
+                logging.info(f"Original {frame_name}_{frame_number} with size {file_size} bytes")
                 # Add 0x5A5A prefix to merged_data
                 merged_data.extend(b'\x5A' * 2)
                 merged_data.extend(bin_data)
+                # Update frame info with correct offset and size (including prefix)
+                #                   frame_number,     offset,                           size,          is_repeated, original_frame_num
+                frame_info_list.append((frame_number, len(merged_data) - file_size - 2, file_size + 2, False, None))
+                frame_map[frame_number] = (len(merged_data) - file_size - 2, file_size + 2)
 
         except IOError as e:
             logging.error(f"Could not read file '{filename}': {str(e)}")
@@ -114,22 +115,19 @@ def pack_assets(config: PackModelsConfig):
             frame_data = merged_data[offset:offset+size]
             new_merged_data.extend(frame_data)
             # Align to 4 bytes
-            padding = (4 - (len(new_merged_data) % 4)) % 4
-            if padding > 0:
-                new_merged_data.extend(b'\x00' * padding)
+            # padding = (4 - (len(new_merged_data) % 4)) % 4
+            # if padding > 0:
+            #     new_merged_data.extend(b'\x00' * padding)
             # Update frame map with new offset
             frame_map[frame_number] = (new_offset, size)
+            print(f" O [{frame_number}] frame_data: 0x{new_offset:08x} ({size})")
             file_info_list.append((new_offset, size))
             new_offset = len(new_merged_data)
-
-    # Then handle repeated frames
-    for frame_number, offset, size, is_repeated, original_frame in frame_info_list:
-        if is_repeated:
+        else:
             if original_frame in frame_map:
                 orig_offset, orig_size = frame_map[original_frame]
                 file_info_list.append((orig_offset, orig_size))
-            else:
-                logging.warning(f"Repeated frame {frame_number} references non-existent original frame {original_frame}")
+                print(f" R [{frame_number}] frame_data: 0x{orig_offset:08x} ({orig_size})")
 
     total_files = len(file_info_list)
     if total_files == 0:
@@ -140,6 +138,7 @@ def pack_assets(config: PackModelsConfig):
     for i, (offset, file_size) in enumerate(file_info_list):
         mmap_table.extend(file_size.to_bytes(4, byteorder='little'))
         mmap_table.extend(offset.to_bytes(4, byteorder='little'))
+        logging.info(f"[{i + 1}] frame_data: 0x{offset:08x} ({file_size})")
 
     # Align mmap_table to 4 bytes
     padding = (4 - (len(mmap_table) % 4)) % 4

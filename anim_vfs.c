@@ -127,7 +127,7 @@ int anim_vfs_get_frame_size(anim_vfs_handle_t handle, int index)
     anim_vfs_t *parser = (anim_vfs_t *)(handle);
 
     if (parser->total_frames > index) {
-        return (parser->entries + index)->table->asset_size;
+        return ((parser->entries + index)->table->asset_size - ASSETS_FILE_MAGIC_LEN);
     } else {
         ESP_LOGE(TAG, "Invalid index: %d. Maximum index is %d.", index, parser->total_frames);
         return -1;

@@ -162,41 +162,6 @@ static void free_tree(Node* node)
     free(node);
 }
 
-// static void print_tree(Node* node, const char* prefix, bool is_left)
-// {
-//     if (!node) {
-//         return;
-//     }
-
-//     // Print current node
-//     printf("%s%s", prefix, is_left ? "└── " : "┌── ");
-//     if (node->is_leaf) {
-//         printf("'%c' (%02x)\n", node->value, node->value);
-//     } else {
-//         printf("•\n");
-//     }
-
-//     // Print children
-//     char new_prefix[256];
-//     if (node->left) {
-//         snprintf(new_prefix, sizeof(new_prefix), "%s%s", prefix, is_left ? "    " : "│   ");
-//         print_tree(node->left, new_prefix, true);
-//     }
-//     if (node->right) {
-//         snprintf(new_prefix, sizeof(new_prefix), "%s%s", prefix, is_left ? "    " : "│   ");
-//         print_tree(node->right, new_prefix, false);
-//     }
-// }
-
-// static void print_bytes(const char* label, const uint8_t* data, size_t len, size_t max_display)
-// {
-//     printf("%s: ", label);
-//     for (size_t i = 0; i < len && i < max_display; ++i) {
-//         printf("%02x ", data[i]);
-//     }
-//     printf("\n%s length: %zu bytes\n", label, len);
-// }
-
 static esp_err_t decode_huffman_data(const uint8_t* data, size_t data_len,
                                      const uint8_t* dict_bytes, size_t dict_len,
                                      uint8_t* output, size_t* output_len)
@@ -205,9 +170,6 @@ static esp_err_t decode_huffman_data(const uint8_t* data, size_t data_len,
         *output_len = 0;
         return ESP_OK;
     }
-
-    // print_bytes("Compressed data", data, data_len, 30);
-    // print_bytes("Dictionary data", dict_bytes, dict_len, 30);
 
     // Get padding
     uint8_t padding = dict_bytes[0];
@@ -248,14 +210,10 @@ static esp_err_t decode_huffman_data(const uint8_t* data, size_t data_len,
         current->value = byte_val;
     }
 
-    // print_tree(root, "", false);
-
     // Convert bitstream
     size_t total_bits = data_len * 8;
-    // printf("Binary data length: %zu bits\n", total_bits);
     if (padding > 0) {
         total_bits -= padding;
-        // printf("Binary data length after removing padding: %zu bits\n", total_bits);
     }
 
     current = root;
@@ -266,11 +224,6 @@ static esp_err_t decode_huffman_data(const uint8_t* data, size_t data_len,
         size_t byte_idx = bit_index / 8;
         int bit_offset = 7 - (bit_index % 8);  // Most significant bit first
         int bit = (data[byte_idx] >> bit_offset) & 1;
-
-        // printf("[%zu] bit:%d, current:%p, left:%p, right:%p\n",
-        //        bit_index, bit, (void*)current,
-        //        (void*)(current ? current->left : NULL),
-        //        (void*)(current ? current->right : NULL));
 
         if (bit == 0) {
             current = current->left;
@@ -284,13 +237,11 @@ static esp_err_t decode_huffman_data(const uint8_t* data, size_t data_len,
         }
 
         if (current->is_leaf) {
-            // printf("Decoded byte: 0x%02X at bit %zu\n", current->value, bit_index);
             output[out_pos++] = current->value;
             current = root;
         }
     }
 
-    // printf("Decoded data length: %zu bytes\n", out_pos);
     *output_len = out_pos;
     free_tree(root);
     return ESP_OK;
@@ -307,7 +258,6 @@ esp_err_t anim_dec_huffman_decode(const uint8_t* buffer, size_t buflen, uint8_t*
     // First byte indicates encoding type (already checked in caller)
     // Next two bytes contain dictionary length (big endian)
     uint16_t dict_len = (buffer[2] << 8) | buffer[1];
-    // printf("dict_len:%d\r\n", dict_len);
     if (buflen < 3 + dict_len) {
         ESP_LOGE(TAG, "Buffer too short for dictionary");
         return ESP_FAIL;
@@ -331,11 +281,4 @@ esp_err_t anim_dec_huffman_decode(const uint8_t* buffer, size_t buflen, uint8_t*
     }
 
     return ESP_OK;
-
-    // Print decoded data for debugging
-    // printf("Decoded data (%d bytes):\n", *output_len);
-    // for (size_t i = 0; i < *output_len && i < 30; i++) {
-    //     printf("%02X ", output[i]);
-    // }
-    // printf("\n");
 }

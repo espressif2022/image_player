@@ -40,6 +40,13 @@ void tearDown(void)
     unity_utils_check_leak(before_free_32bit, after_free_32bit, "32BIT", TEST_MEMORY_LEAK_THRESHOLD);
 }
 
+static bool flush_io_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
+{
+    anim_player_handle_t handle = (anim_player_handle_t)user_ctx;
+    anim_player_flush_ready(handle);
+    return true;
+}
+
 static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, int y2, const void *data)
 {
     esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)anim_player_get_user_data(handle);
@@ -47,7 +54,6 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
     //     ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
     // }
     esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
-    anim_player_flush_ready(handle);
 }
 
 static void update_callback(anim_player_handle_t handle, player_event_t event)
@@ -104,11 +110,17 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     handle = anim_player_init(&config);
     TEST_ASSERT_NOT_NULL(handle);
 
+    const esp_lcd_panel_io_callbacks_t cbs = {
+        .on_color_trans_done = flush_io_ready,
+    };
+    esp_lcd_panel_io_register_event_callbacks(io_handle, &cbs, handle);
+
     uint32_t start, end;
     const void *src_data;
     size_t src_len;
     
     for(int i = 0; i < mmap_assets_get_stored_files(assets_handle); i++) {
+
         src_data = mmap_assets_get_mem(assets_handle, i);
         src_len = mmap_assets_get_size(assets_handle, i);
 
@@ -116,13 +128,13 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         anim_player_set_src_data(handle, src_data, src_len);
         anim_player_get_segment(handle, &start, &end);
         anim_player_set_segment(handle, start, end, 30, true);
-        ESP_LOGW(TAG, "start:%d, end:%d", start, end);
+        ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
 
         anim_player_update(handle, PLAYER_ACTION_START);
         vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
 
-        // anim_player_update(handle, PLAYER_ACTION_STOP);
-        // vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
+        anim_player_update(handle, PLAYER_ACTION_STOP);
+        vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
     }
 
     ESP_LOGI(TAG, "test done");
@@ -155,10 +167,7 @@ TEST_CASE("test anim player init and deinit", "[anim_player][4bit]")
 
 TEST_CASE("test anim player init and deinit", "[anim_player][8bit]")
 {
-    while(1) {
-        test_anim_player_common("assets_8bit", MMAP_TEST_8BIT_FILES, MMAP_TEST_8BIT_CHECKSUM, 5);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
+    test_anim_player_common("assets_8bit", MMAP_TEST_8BIT_FILES, MMAP_TEST_8BIT_CHECKSUM, 5);
 }
 
 void app_main(void)

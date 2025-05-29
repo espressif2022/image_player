@@ -7,6 +7,20 @@ import math
 from sklearn.cluster import KMeans
 import time
 from multiprocessing import Pool, cpu_count
+import heapq
+from collections import defaultdict, Counter, namedtuple
+import argparse
+
+# Define Huffman tree node
+class Node:
+    def __init__(self, freq, char, left, right):
+        self.freq = freq
+        self.char = char
+        self.left = left
+        self.right = right
+    
+    def __lt__(self, other):  # For heapq comparison
+        return self.freq < other.freq
 
 
 def floyd_steinberg_dithering(img, bit_depth=4):
@@ -51,7 +65,7 @@ def process_row(args):
         for x in range(0, width, 2):
             p1 = pixels[y, x] // 17  # 0-15
             if x + 1 < width:
-                p2 = pixels[y, x + 1] // 17
+                p2 = pixels[y, x + 1]
             else:
                 p2 = 0
             byte = (p1 << 4) | p2
@@ -139,14 +153,14 @@ def save_bmp(filename, pixels, bit_depth=4):
     # End timing and print
     end_time = time.time()
     execution_time = end_time - start_time
-    print(f"Processing completed: Image size {width}x{height}, Total time: {execution_time:.3f} seconds")
+    # print(f"Processing completed: Image size {width}x{height}, Total time: {execution_time:.3f} seconds")
 
     with open(filename, 'wb') as f:
         f.write(bmp_header)
         f.write(dib_header)
         f.write(palette_data)
         f.write(pixel_data)
-    print(f"Saved {bit_depth}-bit BMP: {filename}")
+    print(f"{os.path.basename(filename)}")
 
 
 def generate_color_palette(pixels):
@@ -379,6 +393,232 @@ def find_palette_index(pixel_value, palette):
     return closest_index
 
 
+def build_huffman_tree(data):
+    """Build Huffman tree from data using frequency analysis.
+    
+    Args:
+        data: Input data to build tree from
+        
+    Returns:
+        Node: Root node of the Huffman tree
+    """
+    # Count frequency of each byte
+    freq = Counter(data)
+    
+    # Create leaf nodes for each unique byte
+    heap = [Node(f, c, None, None) for c, f in freq.items()]
+    heapq.heapify(heap)
+    
+    # Build tree by merging nodes
+    while len(heap) > 1:
+        node1 = heapq.heappop(heap)
+        node2 = heapq.heappop(heap)
+        merged = Node(node1.freq + node2.freq, None, node1, node2)
+        heapq.heappush(heap, merged)
+    
+    root = heap[0] if heap else None
+    
+    # Print the tree structure
+    # print("\nHuffman Tree Structure:")
+    # print_tree(root)
+    # print()
+    
+    return root
+
+
+def build_code_map(node, prefix="", code_map=None):
+    """Generate Huffman code map by traversing the tree.
+    
+    Args:
+        node: Current node in the tree
+        prefix: Current code prefix
+        code_map: Dictionary to store the codes
+        
+    Returns:
+        dict: Mapping of bytes to their Huffman codes
+    """
+    if code_map is None:
+        code_map = dict()
+    if node is None:
+        return code_map
+    if node.char is not None:
+        code_map[node.char] = prefix
+    build_code_map(node.left, prefix + "0", code_map)
+    build_code_map(node.right, prefix + "1", code_map)
+    return code_map
+
+
+def huffman_compress(data):
+    """Compress data using Huffman coding.
+    
+    Args:
+        data: Input data to compress
+        
+    Returns:
+        tuple: (compressed_data, dict_size, dict_bytes)
+            - compressed_data: Compressed data as bytes
+            - dict_size: Number of entries in the dictionary
+            - dict_bytes: Dictionary data for decompression
+    """
+    if not data:
+        return bytearray(), 0, None
+    
+    # Build Huffman tree and get encoding dictionary
+    tree = build_huffman_tree(data)
+    code_map = build_code_map(tree)
+    
+    # Print code map for debugging
+    # print("\nHuffman Code Map:")
+    # for char, code in sorted(code_map.items()):
+    #     print(f"  '{chr(char)}' ({char:02x}) -> {code}")
+    # print()
+    
+    # Encode data
+    encoded = ''.join(code_map[byte] for byte in data)
+    
+    # Pad encoded string to multiple of 8
+    padding = (8 - len(encoded) % 8) % 8
+    encoded += '0' * padding
+    
+    # Convert to bytes
+    result = bytearray()
+    for i in range(0, len(encoded), 8):
+        byte = encoded[i:i+8]
+        result.append(int(byte, 2))
+    
+    # Convert dictionary to bytes
+    dict_bytes = bytearray()
+    dict_bytes.append(padding)  # Store padding bits at the start of dictionary
+    for byte, code in code_map.items():
+        dict_bytes.extend([byte, len(code)])  # Store byte value and code length
+        # Convert code string to bytes
+        code_bytes = int(code, 2).to_bytes((len(code) + 7) // 8, byteorder='big')
+        dict_bytes.extend(code_bytes)
+    
+    # Print debug information
+    # print(f"Original data: {' '.join(f'{b:02x}' for b in data[:30])}")
+    # print(f"Encoded bits: {encoded[:100]}")
+    # print(f"Compressed data: {' '.join(f'{b:02x}' for b in result[:30])}")
+    # print(f"Dictionary bytes: {' '.join(f'{b:02x}' for b in dict_bytes[:30])}")
+    # print(f"Encoded length: {len(encoded)} bits")
+    # print(f"Padding: {padding} bits")
+    
+    return result, len(code_map), dict_bytes
+
+
+def print_tree(node, prefix="", is_left=True):
+    """Print the Huffman tree structure.
+    
+    Args:
+        node: Current node to print
+        prefix: Prefix for the current level
+        is_left: Whether this node is a left child
+    """
+    if node is None:
+        return
+        
+    # Print current node
+    print(f"{prefix}{'└── ' if is_left else '┌── '}", end="")
+    if node.char is not None:
+        print(f"'{chr(node.char)}' ({node.char:02x})")
+    else:
+        print("•")
+        
+    # Print children
+    if node.left is not None:
+        print_tree(node.left, prefix + ("    " if is_left else "│   "), True)
+    if node.right is not None:
+        print_tree(node.right, prefix + ("    " if is_left else "│   "), False)
+
+
+def huffman_decode(data, dict_bytes):
+    """Decompress data using Huffman coding.
+    
+    Args:
+        data: Compressed data
+        dict_bytes: Dictionary data for decompression
+        
+    Returns:
+        bytearray: Decompressed data
+    """
+    if not data or not dict_bytes:
+        return bytearray()
+    
+    # Print debug information
+    print(f"\nCompressed data: {' '.join(f'{b:02x}' for b in data[:30])}")
+    print(f"Compressed data length: {len(data)} bytes")
+    print(f"Dictionary data: {' '.join(f'{b:02x}' for b in dict_bytes[:30])}")
+    print(f"Dictionary data length: {len(dict_bytes)} bytes")
+    
+    # Get padding bits from dictionary
+    padding = dict_bytes[0]
+    dict_bytes = dict_bytes[1:]  # Remove padding info from dictionary
+    print(f"Padding bits: {padding}")
+    
+    # Rebuild Huffman tree from dictionary
+    root = Node(0, None, None, None)
+    current = root
+    i = 0
+    
+    while i < len(dict_bytes):
+        # Read byte value and code length
+        byte_val = dict_bytes[i]
+        code_len = dict_bytes[i + 1]
+        i += 2
+        
+        # Read code bytes
+        code_bytes = dict_bytes[i:i + (code_len + 7) // 8]
+        i += (code_len + 7) // 8
+        
+        # Convert code bytes to binary string
+        code = bin(int.from_bytes(code_bytes, byteorder='big'))[2:].zfill(code_len)
+        
+        # Build tree path for this code
+        for bit in code:
+            if bit == '0':
+                if current.left is None:
+                    current.left = Node(0, None, None, None)
+                current = current.left
+            else:
+                if current.right is None:
+                    current.right = Node(0, None, None, None)
+                current = current.right
+        
+        # Set leaf node value
+        current.char = byte_val
+        current = root
+
+    # print_tree(root)
+    
+    # Decode data using the tree
+    decoded = bytearray()
+    current = root
+    
+    # Convert data to binary string
+    binary = ''.join(bin(b)[2:].zfill(8) for b in data)
+    print(f"Binary data length: {len(binary)} bits")
+    
+    # Remove padding bits from the end
+    if padding > 0:
+        binary = binary[:-padding]
+        print(f"Binary data length after removing padding: {len(binary)} bits")
+    
+    # Traverse tree using bits
+    for bit in binary:
+        if bit == '0':
+            current = current.left
+        else:
+            current = current.right
+            
+        # If we reached a leaf node, add its value to decoded data
+        if current.char is not None:
+            decoded.append(current.char)
+            current = root
+    
+    print(f"Decoded data length: {len(decoded)} bytes")
+    return decoded
+
+
 def process_block(args):
     """Process a single block of pixels."""
     top, bottom, width, height, pixels, bit_depth = args
@@ -390,24 +630,48 @@ def process_block(args):
         if bit_depth == 4:
             # Pack two pixels into one byte
             for x in range(0, width, 2):
-                p1 = pixels[row_start + x]  # Already 0-15 index value
+                p1 = pixels[row_start + x] & 0x0F  # Ensure p1 is 0-15
                 if x + 1 < width:
-                    p2 = pixels[row_start + x + 1]
+                    p2 = pixels[row_start + x + 1] & 0x0F  # Ensure p2 is 0-15
                 else:
                     p2 = 0
-                packed_byte = (p1 << 4) | p2
+                packed_byte = ((p1 & 0x0F) << 4) | (p2 & 0x0F)  # Ensure result is 0-255
                 block_data.append(packed_byte)
         else:  # 8-bit
             # Use pixel value directly as index
             for x in range(width):
-                block_data.append(pixels[row_start + x])
+                block_data.append(pixels[row_start + x] & 0xFF)  # Ensure value is 0-255
     
     # RTE compress this block
-    compressed_block = rte_compress(block_data)
-    return compressed_block
+    rte_compressed = rte_compress(block_data)
+
+    # Use test string for Huffman compression
+    # test_string = "123456789"
+    # rte_compressed = bytearray(test_string.encode('ascii'))
+    
+    # Huffman compress this block
+    huffman_compressed, dict_size, dict_bytes = huffman_compress(rte_compressed)
+    
+    # Print compression comparison
+    rte_size = len(rte_compressed)
+    huffman_size = len(huffman_compressed) + len(dict_bytes)  # Include dictionary size
+    original_size = len(block_data)
+    # print(f"huffman_compressed: {huffman_compressed}")
+    
+    # print(f"Block {top}-{bottom} | Original: {original_size}B | RTE: {rte_size}B | Huffman: {huffman_size}B | Dict: {dict_size} entries")
+
+    # 解码数据
+    # decoded_data = huffman_decode(huffman_compressed, dict_bytes)    
+    # print(f"Decoded:{' '.join(f'{b:02x}' for b in decoded_data[:30])}")
+    # print(f"Decoded string: {decoded_data.decode('ascii', errors='replace')}")
+    
+    # return rte_compressed, huffman_compressed, dict_bytes, dict_size  # Return compressed data and dictionary
+    block_original_size = len(block_data)  # Original uncompressed size
+    
+    return rte_compressed, huffman_compressed, dict_bytes, dict_size, block_original_size
 
 
-def split_bmp(im, block_size, input_dir=None, bit_depth=4):
+def split_bmp(im, block_size, input_dir=None, bit_depth=4, enable_huffman=False):
     """Splits grayscale image into raw bitmap blocks with RTE compression.
     
     Args:
@@ -415,6 +679,7 @@ def split_bmp(im, block_size, input_dir=None, bit_depth=4):
         block_size: Height of each block
         input_dir: Input directory (optional)
         bit_depth: Bit depth for the image (4 or 8)
+        enable_huffman: Whether to enable Huffman compression
     
     Returns:
         tuple: (width, height, splits, palette_bytes, split_data, lenbuf)
@@ -433,6 +698,9 @@ def split_bmp(im, block_size, input_dir=None, bit_depth=4):
     row_size = (width * bit_depth + 7) // 8
     row_padded = (row_size + 3) & ~3  # 4-byte align each row
 
+    # Calculate original data size
+    original_size = row_padded * height
+
     # Prepare parallel processing arguments
     process_args = []
     for i in range(splits):
@@ -442,14 +710,53 @@ def split_bmp(im, block_size, input_dir=None, bit_depth=4):
 
     # Use process pool for parallel processing
     split_data = bytearray()
+    total_rte_size = 0
+    total_huffman_size = 0
+    total_rte_original = 0
+    total_huffman_original = 0
+    total_saved_size = 0
     lenbuf = []
     with Pool(processes=cpu_count()) as pool:
         compressed_blocks = pool.map(process_block, process_args)
         
         # Collect processing results
-        for compressed_block in compressed_blocks:
-            split_data.extend(compressed_block)
-            lenbuf.append(len(compressed_block))
+        for rte_block, huffman_block, dict_bytes, dict_size, block_original_size in compressed_blocks:
+            rte_size = len(rte_block)
+            huffman_size = len(huffman_block) + len(dict_bytes)  # Include dictionary size
+            
+            # Choose compression method based on enable_huffman flag and size comparison
+            if enable_huffman and huffman_size < rte_size:
+                split_data.append(1)  # Huffman identifier
+                split_data.extend(len(dict_bytes).to_bytes(2, byteorder='little'))  # Dictionary size (2 bytes)
+                split_data.extend(dict_bytes)  # Dictionary data
+                split_data.extend(huffman_block)  # Compressed data
+                lenbuf.append(len(huffman_block) + len(dict_bytes) + 3)  # +3 for identifier and dict size
+                total_huffman_size += huffman_size + 3
+                total_huffman_original += block_original_size
+                total_saved_size += rte_size - huffman_size
+            else:
+                split_data.append(0)  # RTE identifier
+                split_data.extend(rte_block)
+                lenbuf.append(len(rte_block) + 1)  # +1 for identifier
+                total_rte_size += rte_size + 1
+                total_rte_original += block_original_size
+
+    # Calculate compression ratios
+    final_size = len(split_data)
+    rte_ratio = (1 - total_rte_size / total_rte_original) * 100 if total_rte_original > 0 else 0
+    haffman_ratio = (1 - total_huffman_size / total_huffman_original) * 100 if total_huffman_original > 0 else 0
+    final_ratio = (1 - final_size / original_size) * 100
+
+    # Print statistics in one line with colored ratios
+    color_rte = '\033[31m' if rte_ratio < 0 else '\033[32m'
+    color_huffman = '\033[31m' if haffman_ratio < 0 else '\033[32m'
+    ratio_color_total = '\033[31m' if final_ratio < 0 else '\033[32m'
+
+    print(f"Frame {width:4d}x{height:4d} | Splits: {splits:3d}")
+    print(f"RTE:     {total_rte_size:8d}B | Ratio: {color_rte}{rte_ratio:+.2f}%\033[0m | Original: {total_rte_original:8d}B")
+    if enable_huffman:
+        print(f"Huffman: {total_huffman_size:8d}B | Ratio: {color_huffman}{haffman_ratio:+.2f}%\033[0m | Original: {total_huffman_original:8d}B | Saved: {total_saved_size:8d}B")
+    print(f"Total:   {final_size:8d}B | Ratio: {ratio_color_total}{final_ratio:+.2f}%\033[0m | Original: {original_size:8d}B")
 
     return width, height, splits, palette_bytes, split_data, lenbuf
 
@@ -469,7 +776,7 @@ def save_image(output_file_path, header, split_data, palette_bytes):
         # print("Split data saved.")
 
 
-def process_bmp(input_file, output_file, split_height, bit_depth=4):
+def process_bmp(input_file, output_file, split_height, bit_depth=4, enable_huffman=False):
     """Main function to process the image and save it as the packaged file."""
     try:
         SPLIT_HEIGHT = int(split_height)
@@ -494,7 +801,7 @@ def process_bmp(input_file, output_file, split_height, bit_depth=4):
         sys.exit(0)
 
     # Split the image into blocks based on the specified split height
-    width, height, splits, palette_bytes, split_data, lenbuf = split_bmp(im, SPLIT_HEIGHT, input_dir, bit_depth)
+    width, height, splits, palette_bytes, split_data, lenbuf = split_bmp(im, SPLIT_HEIGHT, input_dir, bit_depth, enable_huffman)
 
     # Create header based on image properties
     header = create_header(width, height, splits, SPLIT_HEIGHT, lenbuf, ext, bit_depth)
@@ -506,7 +813,7 @@ def process_bmp(input_file, output_file, split_height, bit_depth=4):
     print('Completed', input_filename, '->', os.path.basename(output_file_path))
 
 
-def process_images_in_directory(input_dir, output_dir, split_height, bit_depth=4):
+def process_images_in_directory(input_dir, output_dir, split_height, bit_depth=4, enable_huffman=False):
     """Process all BMP images in the input directory."""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -538,30 +845,31 @@ def process_images_in_directory(input_dir, output_dir, split_height, bit_depth=4
                     filename_length = len(converted_filename)
                     f.write(bytearray([filename_length]))
                     f.write(converted_filename.encode('UTF-8'))
-                print(f"Duplicate file: {filename} matches {converted_filename}.")
+                # print(f"Duplicate file: {filename} matches {converted_filename}.")
                 continue
 
             # Process the image
-            process_bmp(input_file, output_dir, split_height, bit_depth)
+            process_bmp(input_file, output_dir, split_height, bit_depth, enable_huffman)
 
             # Save the processed filename in the dictionary
             processed_images[file_hash] = filename
 
 
 def main():
-    if len(sys.argv) != 5:
-        print("Usage: python gif_to_bmp_and_split.py input_folder output_folder split_height bit_depth")
-        print("bit_depth: 4 for 4-bit grayscale, 8 for 8-bit grayscale")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description='Convert GIF to BMP and split images')
+    parser.add_argument('input_folder', help='Input folder containing GIF files')
+    parser.add_argument('output_folder', help='Output folder for processed files')
+    parser.add_argument('--split', type=int, required=True, help='Split height for image processing')
+    parser.add_argument('--depth', type=int, choices=[4, 8], required=True, help='Bit depth (4 for 4-bit grayscale, 8 for 8-bit grayscale)')
+    parser.add_argument('--enable-huffman', action='store_true', help='Enable Huffman compression (default: disabled)')
 
-    input_dir = sys.argv[1]
-    output_dir = sys.argv[2]
-    split_height = sys.argv[3]
-    bit_depth = int(sys.argv[4])
+    args = parser.parse_args()
 
-    if bit_depth not in [4, 8]:
-        print("Error: bit_depth must be either 4 or 8")
-        sys.exit(1)
+    input_dir = args.input_folder
+    output_dir = args.output_folder
+    split_height = args.split
+    bit_depth = args.depth
+    enable_huffman = args.enable_huffman
 
     for root, dirs, files in os.walk(input_dir):
         for file in files:
@@ -569,7 +877,7 @@ def main():
                 gif_path = os.path.join(root, file)
                 convert_gif_to_bmp(gif_path, output_dir, bit_depth)
 
-    process_images_in_directory(output_dir, output_dir, split_height, bit_depth)
+    process_images_in_directory(output_dir, output_dir, split_height, bit_depth, enable_huffman)
 
 
 if __name__ == "__main__":

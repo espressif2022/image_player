@@ -87,7 +87,6 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
     // Allocate decode buffer
     uint8_t *decode_buffer = NULL;
     if (header->bit_depth == 4) {
-        ESP_LOGI(TAG, "4bit, width:%d, split_height:%d, %d", header->width, header->split_height, (header->split_height + (header->split_height % 2)) / 2);
         decode_buffer = (uint8_t *)malloc(header->width * (header->split_height + (header->split_height % 2)) / 2);
     } else if (header->bit_depth == 8) {
         decode_buffer = (uint8_t *)malloc(header->width * header->split_height);
@@ -107,7 +106,7 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
         int compressed_len = header->split_lengths[split];
 
         esp_err_t decode_result = ESP_FAIL;
-        uint32_t valid_height;
+        int valid_height;
 
         if (split == header->splits - 1) {
             valid_height = header->height - split * header->split_height;
@@ -218,7 +217,7 @@ static void anim_player_task(void *arg)
         if (bits & NEED_DELETE) {
             ESP_LOGW(TAG, "Player deleted");
             xEventGroupSetBits(ctx->events.event_group, DELETE_DONE);
-            vTaskDelete(NULL);
+            vTaskDeleteWithCaps(NULL);
         }
 
         if (bits & WAIT_STOP) {
@@ -347,7 +346,7 @@ void anim_player_update(anim_player_handle_t handle, player_action_t event)
     if (xQueueSend(ctx->events.event_queue, &player_event, pdMS_TO_TICKS(10)) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to send event to queue");
     }
-    // ESP_LOGW(TAG, "update event: %s", event == PLAYER_ACTION_START ? "START" : "STOP");
+    ESP_LOGD(TAG, "update event: %s", event == PLAYER_ACTION_START ? "START" : "STOP");
 }
 
 esp_err_t anim_player_set_src_data(anim_player_handle_t handle, const void *src_data, size_t src_len)
@@ -417,7 +416,7 @@ void anim_player_set_segment(anim_player_handle_t handle, uint32_t start, uint32
     ctx->run_end = end;
     ctx->repeat = repeat;
     ctx->fps = fps;
-    ESP_LOGI(TAG, "set segment: %d -> %d, repeat:%d, fps:%d", start, end, repeat, fps);
+    ESP_LOGD(TAG, "set segment: %" PRIu32 " -> %" PRIu32 ", repeat:%d, fps:%" PRIu32 "", start, end, repeat, fps);
 }
 
 void *anim_player_get_user_data(anim_player_handle_t handle)
@@ -459,13 +458,10 @@ anim_player_handle_t anim_player_init(const anim_player_config_t *config)
     player->events.event_queue = xQueueCreate(5, sizeof(anim_player_event_t));
 
     // Set default task configuration if not specified
-    // const uint32_t caps = config->task.task_stack_caps ? config->task.task_stack_caps : MALLOC_CAP_DEFAULT; // caps cannot be zero
+    const uint32_t caps = config->task.task_stack_caps ? config->task.task_stack_caps : MALLOC_CAP_DEFAULT; // caps cannot be zero
     if (config->task.task_affinity < 0) {
-        // xTaskCreateWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, caps);
-        xTaskCreate(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task);
+        xTaskCreateWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, caps);
     } else {
-        // xTaskCreatePinnedToCoreWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, config->task.task_affinity, caps);
-        xTaskCreatePinnedToCore(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, config->task.task_affinity);
     }
 
     return (anim_player_handle_t)player;

@@ -14,7 +14,7 @@
 #include "esp_mmap_assets.h"
 
 #define MMAP_TEST_8BIT_FILES           26
-#define MMAP_TEST_8BIT_CHECKSUM        0x2277
+#define MMAP_TEST_8BIT_CHECKSUM        0x88D7
 
 enum MMAP_TEST_8BIT_LISTS {
     MMAP_TEST_8BIT_ANGER_ENTER_AAF = 0,        /*!< Anger_enter.aaf */

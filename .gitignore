@@ -97,3 +97,7 @@ dist/
 
 #Vscoe
 .vscode/
+.sdkconfig
+.sbmp
+.bmp
+.gif

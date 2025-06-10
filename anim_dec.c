@@ -17,10 +17,16 @@
 
 static const char *TAG = "anim_decoder";
 
-uint32_t anim_dec_parse_palette(const image_header_t *header, uint8_t index)
+uint16_t anim_dec_parse_palette(const image_header_t *header, uint8_t index, bool swap)
 {
     const uint8_t *color = &header->palette[index * 4];
-    return (color[2] << 16) | (color[1] << 8) | color[0];
+    // RGB888: R=color[2], G=color[1], B=color[0]
+    // RGB565:
+    // - R: (color[2] & 0xF8) << 8
+    // - G: (color[1] & 0xFC) << 3
+    // - B: (color[0] & 0xF8) >> 3
+    return swap ? __builtin_bswap16(((color[2] & 0xF8) << 8) | ((color[1] & 0xFC) << 3) | ((color[0] & 0xF8) >> 3)) : \
+           ((color[2] & 0xF8) << 8) | ((color[1] & 0xFC) << 3) | ((color[0] & 0xF8) >> 3);
 }
 
 image_format_t anim_dec_parse_header(const uint8_t *data, size_t data_len, image_header_t *header)

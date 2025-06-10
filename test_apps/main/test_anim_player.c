@@ -50,9 +50,9 @@ static bool flush_io_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_
 static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, int y2, const void *data)
 {
     esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)anim_player_get_user_data(handle);
-    // if(y1 == 0) {
-    //     ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
-    // }
+    if(y1 == 0) {
+        ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
+    }
     esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
 }
 
@@ -63,7 +63,7 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
         ESP_LOGI(TAG, "Event: IDLE");
         break;
     case PLAYER_EVENT_ONE_FRAME_DONE:
-        // ESP_LOGI(TAG, "Event: ONE_FRAME_DONE");
+        // ESP_LOGW(TAG, "Event: ONE_FRAME_DONE");
         break;
     case PLAYER_EVENT_ALL_FRAME_DONE:
         ESP_LOGI(TAG, "Event: ALL_FRAME_DONE");
@@ -106,6 +106,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         .flags = {.swap = true},
         .task = ANIM_PLAYER_INIT_CONFIG()
     };
+    config.task.task_stack_caps = MALLOC_CAP_INTERNAL;
 
     handle = anim_player_init(&config);
     TEST_ASSERT_NOT_NULL(handle);
@@ -127,7 +128,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         ESP_LOGW(TAG, "set src, %s", mmap_assets_get_name(assets_handle, i));
         anim_player_set_src_data(handle, src_data, src_len);
         anim_player_get_segment(handle, &start, &end);
-        anim_player_set_segment(handle, start, end, 30, true);
+        anim_player_set_segment(handle, start, end, 20, true);
         ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
 
         anim_player_update(handle, PLAYER_ACTION_START);

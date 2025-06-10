@@ -78,7 +78,7 @@ typedef struct Node {
  */
 image_format_t anim_dec_parse_header(const uint8_t *data, size_t data_len, image_header_t *header);
 
-uint32_t anim_dec_parse_palette(const image_header_t *header, uint8_t index);
+uint16_t anim_dec_parse_palette(const image_header_t *header, uint8_t index, bool swap);
 
 void anim_dec_calculate_offsets(const image_header_t *header, uint16_t *offsets);
 

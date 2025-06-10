@@ -1,4 +1,4 @@
-version: "1.1.0~1"
+version: "1.1.1"
 description: An image rendering component for ESP-IDF, optimized for efficient playback.
 url: https://github.com/espressif2022/image_player
 repository: "https://github.com/espressif2022/image_player.git"
@@ -9,3 +9,5 @@ dependencies:
     version: 0.*
   idf:
     version: '>=5.0'
+examples:
+  - path: ./example

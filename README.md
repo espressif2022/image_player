@@ -13,12 +13,12 @@
 
 ## Scripts
 
-### GIF to Split BMP Converter (`gif_to_split_bmp.py`)
-This script converts GIF animations into a series of split BMP files optimized for embedded systems.
+### GIF to AAF Converter (`gif_to_aaf.py`)
+This script converts GIF animations into AAF format.
 
 #### Usage
 ```bash
-python gif_to_split_bmp.py <input_folder> <output_folder> --split <split_height> --depth <bit_depth> [--enable-huffman]
+python gif_to_aaf.py <input_folder> <output_folder> --split <split_height> --depth <bit_depth> [--enable-huffman]
 ```
 
 #### Parameters
@@ -31,26 +31,10 @@ python gif_to_split_bmp.py <input_folder> <output_folder> --split <split_height>
 #### Example
 ```bash
 # Using only RLE compression
-python gif_to_split_bmp.py ./gifs ./output --split 16 --depth 4
+python gif_to_aaf.py ./gifs ./output --split 16 --depth 4
 
 # Using both RLE and Huffman compression
-python gif_to_split_bmp.py ./gifs ./output --split 16 --depth 4 --enable-huffman
-```
-
-### GIF Merge Tool (`gif_merge.py`)
-This script merges split BMP files into a single optimized asset file for embedded systems.
-
-#### Usage
-```bash
-python gif_merge.py <input_dir>
-```
-
-#### Parameters
-- `input_dir`: Directory containing split BMP files to merge
-
-#### Example
-```bash
-python gif_merge.py ./output
+python gif_to_aaf.py ./gifs ./output --split 16 --depth 4 --enable-huffman
 ```
 
 #### Features

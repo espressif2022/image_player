@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include <string.h>
+#include "esp_timer.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_check.h"
@@ -57,13 +58,8 @@ typedef struct {
     int run_end;
     bool repeat;
     int fps;
-    uint32_t last_frame_time;
+    int64_t last_frame_time;
 } anim_player_run_ctx_t;
-
-static inline uint16_t rgb888_to_rgb565(uint32_t color)
-{
-    return (((color >> 16) & 0xF8) << 8) | (((color >> 8) & 0xFC) << 3) | ((color & 0xF8) >> 3);
-}
 
 static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_header_t *header, anim_player_context_t *ctx)
 {
@@ -99,6 +95,27 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
     }
 
     uint16_t *pixels = (uint16_t *)frame_buffer;
+
+    uint16_t color_depth = 0;
+
+    if (header->bit_depth == 4) {
+        color_depth = 16;
+    } else if (header->bit_depth == 8) {
+        color_depth = 256;
+    }
+
+    uint32_t *color_cache = (uint32_t *)malloc(color_depth * sizeof(uint32_t));
+    if (color_cache == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate memory for color_cache");
+        free(frame_buffer);
+        free(decode_buffer);
+        free(offsets);
+        return ESP_FAIL;
+    }
+
+    for (int i = 0; i < color_depth; i++) {
+        color_cache[i] = 0xFFFFFFFF;
+    }
 
     // Process each split
     for (int split = 0; split < header->splits; split++) {
@@ -153,22 +170,34 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
                     uint8_t index1 = (packed_gray & 0xF0) >> 4;
                     uint8_t index2 = (packed_gray & 0x0F);
 
-                    uint32_t color1 = anim_dec_parse_palette(header, index1);
-                    uint32_t color2 = anim_dec_parse_palette(header, index2);
+                    if (color_cache[index1] == 0xFFFFFFFF) {
+                        uint16_t color = anim_dec_parse_palette(header, index1, ctx->flags.swap);
+                        color_cache[index1] = color;
+                    }
+                    pixels[y * header->width + x] = (uint16_t)color_cache[index1];
 
-                    pixels[y * header->width + x] = ctx->flags.swap ? __builtin_bswap16(rgb888_to_rgb565(color1)) : rgb888_to_rgb565(color1);
                     if (x + 1 < header->width) {
-                        pixels[y * header->width + x + 1] = ctx->flags.swap ? __builtin_bswap16(rgb888_to_rgb565(color2)) : rgb888_to_rgb565(color2);
+                        if (color_cache[index2] == 0xFFFFFFFF) {
+                            uint16_t color = anim_dec_parse_palette(header, index2, ctx->flags.swap);
+                            color_cache[index2] = color;
+                        }
+                        pixels[y * header->width + x + 1] = (uint16_t)color_cache[index2];
                     }
                 }
             }
+            
         } else if (header->bit_depth == 8) {
             // 8-bit mode: each byte is one pixel
             for (int y = 0; y < valid_height; y++) {
+                // First process all indices in the line to ensure color_cache is populated
                 for (int x = 0; x < header->width; x++) {
                     uint8_t index = decode_buffer[y * header->width + x];
-                    uint32_t color = anim_dec_parse_palette(header, index);
-                    pixels[y * header->width + x] = ctx->flags.swap ? __builtin_bswap16(rgb888_to_rgb565(color)) : rgb888_to_rgb565(color);
+                    if (color_cache[index] == 0xFFFFFFFF) {
+                        uint16_t color = anim_dec_parse_palette(header, index, ctx->flags.swap);
+                        color_cache[index] = color;
+                    }
+                    // Copy the color value directly
+                    pixels[y * header->width + x] = (uint16_t)color_cache[index];
                 }
             }
         } else {
@@ -178,7 +207,6 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
 
         // Flush decoded data
         xEventGroupClearBits(ctx->events.event_group, WAIT_FLUSH_DONE);
-
         if (ctx->flush_cb) {
             ctx->flush_cb(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, pixels);
         }
@@ -186,6 +214,7 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
     }
 
     // Cleanup
+    free(color_cache);
     free(offsets);
     free(frame_buffer);
     free(decode_buffer);
@@ -207,7 +236,7 @@ static void anim_player_task(void *arg)
     run_ctx.run_end = ctx->run_end;
     run_ctx.repeat = ctx->repeat;
     run_ctx.fps = ctx->fps;
-    run_ctx.last_frame_time = xTaskGetTickCount();
+    run_ctx.last_frame_time = esp_timer_get_time();
 
     while (1) {
         EventBits_t bits = xEventGroupWaitBits(ctx->events.event_group,
@@ -244,12 +273,13 @@ static void anim_player_task(void *arg)
         do {
             for (int i = run_ctx.run_start; (i <= run_ctx.run_end) && (run_ctx.action != PLAYER_ACTION_STOP); i++) {
                 // Frame rate control
-                uint32_t current_time = xTaskGetTickCount();
-                uint32_t elapsed = current_time - run_ctx.last_frame_time;
-                if (elapsed < pdMS_TO_TICKS(FPS_TO_MS(run_ctx.fps))) {
-                    vTaskDelay(pdMS_TO_TICKS(FPS_TO_MS(run_ctx.fps)) - elapsed);
+                int64_t elapsed = esp_timer_get_time() - run_ctx.last_frame_time;
+                elapsed = elapsed / 1000;
+                if (elapsed < FPS_TO_MS(run_ctx.fps)) {
+                    vTaskDelay(pdMS_TO_TICKS(FPS_TO_MS(run_ctx.fps) - elapsed));
+                    ESP_LOGD(TAG, "delay: %d ms", (int)(FPS_TO_MS(run_ctx.fps) - elapsed));
                 }
-                run_ctx.last_frame_time = xTaskGetTickCount();
+                run_ctx.last_frame_time = esp_timer_get_time();
 
                 // Check for new events or delete request
                 bits = xEventGroupWaitBits(ctx->events.event_group,
@@ -462,6 +492,7 @@ anim_player_handle_t anim_player_init(const anim_player_config_t *config)
     if (config->task.task_affinity < 0) {
         xTaskCreateWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, caps);
     } else {
+        xTaskCreatePinnedToCoreWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, config->task.task_affinity, caps);
     }
 
     return (anim_player_handle_t)player;

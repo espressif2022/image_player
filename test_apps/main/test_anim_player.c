@@ -17,6 +17,7 @@
 #include "mmap_generate_test_8bit.h"
 
 #include "ft_label.h"
+#include "ft_blend.h"
 #include "mmap_generate_spiffs_assets.h"
 
 static const char *TAG = "player";
@@ -79,6 +80,95 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
     anim_player_flush_ready(handle);
 }
 
+/* Example function to demonstrate how to use blend_sw_img_draw */
+void blend_sw_img_draw_example(void)
+{
+    /* Define image dimensions */
+    const int32_t img_width = 240;
+    const int32_t img_height = 320;
+    const int32_t square_size = 100;
+    
+    /* Create source and destination buffers */
+    blend_color_t *src_buf = malloc(square_size * square_size * sizeof(blend_color_t));
+    label_opa_t *mask_buf = malloc(square_size * square_size * sizeof(label_opa_t));
+    blend_color_t *dest_buf = malloc(img_width * img_height * sizeof(blend_color_t));
+    
+    if (!src_buf || !dest_buf || !mask_buf) {
+        /* Handle memory allocation error */
+        free(src_buf);
+        free(dest_buf);
+        free(mask_buf);
+        return;
+    }
+
+    /* Initialize destination buffer with red color and swap16 */
+    for (int i = 0; i < img_width * img_height; i++) {
+        dest_buf[i].full = 0xF800;  /* Red color (RGB565 format) */
+        dest_buf[i].full = (dest_buf[i].full << 8) | (dest_buf[i].full >> 8);  /* Swap16 */
+    }
+    
+    /* Calculate center position for 100x100 square */
+    const int32_t start_x = (img_width - square_size) / 2;
+    const int32_t start_y = (img_height - square_size) / 2;
+    
+    /* Initialize source image with white square and swap16 */
+    for (int i = 0; i < square_size * square_size; i++) {
+        src_buf[i].full = 0xFFFF;  /* White color */
+        src_buf[i].full = (src_buf[i].full << 8) | (src_buf[i].full >> 8);  /* Swap16 */
+    }
+    
+    static uint8_t mask_value = 10;
+    /* Initialize mask buffer with 90% opacity */
+    for (int i = 0; i < square_size * square_size; i++) {
+        // mask_buf[i] = 80*255/100;  /* 90% opacity */
+        mask_buf[i] = mask_value*255/100;  /* 90% opacity */
+    }
+    mask_value += 10;
+    if (mask_value > 100) {
+        mask_value = 10;
+    }
+    ESP_LOGI(TAG, "mask_value: %d %%", mask_value);
+    
+    /* Define clip area for the square */
+    label_area_t clip_area = {
+        .x1 = start_x,
+        .y1 = start_y,
+        .x2 = start_x + square_size - 1,
+        .y2 = start_y + square_size - 1
+    };
+    ESP_LOGI(TAG, "clip_area: (%d, %d) (%d, %d)", clip_area.x1, clip_area.y1, clip_area.x2, clip_area.y2);
+    
+    /* Calculate the starting position in dest_buf */
+    blend_color_t *dest_start = dest_buf + start_y * img_width + start_x;
+    
+    /* Call blend_sw_img_draw to blend the images */
+    blend_sw_img_draw(
+        dest_start,         /* Destination buffer starting position */
+        img_width,          /* Destination stride */
+        src_buf,            /* Source buffer */
+        square_size,        /* Source stride */
+        mask_buf,           /* Mask buffer */
+        square_size,        /* Mask stride */
+        &clip_area,         /* Clip area */
+        255                 /* Global opacity (fully opaque) */
+    );
+
+    ESP_LOGI(TAG, "blend_sw_img_draw done");
+
+    /* Swap16 before drawing to LCD */
+    // for (int i = 0; i < img_width * img_height; i++) {
+    //     dest_buf[i].full = (dest_buf[i].full << 8) | (dest_buf[i].full >> 8);
+    // }
+
+    esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, dest_buf);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    
+    /* Clean up */
+    free(src_buf);
+    free(dest_buf);
+    free(mask_buf);
+}
+
 static void update_callback(anim_player_handle_t handle, player_event_t event)
 {
     static uint32_t start_time = 0;
@@ -95,13 +185,12 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
         }
         char buffer[30] = {0};
         static uint8_t i = 0;
-        // if(i%2 == 0) {
-            sprintf(buffer, "Blending test %d", i);
-            ft_label_set_text(font_1, (const char *)buffer);
-            ft_label_render_text(font_1, &blend_area);
-        // }
+        sprintf(buffer, "Blending test %d", i);
+        ft_label_set_text(font_1, (const char *)buffer);
+        ft_label_render_text(font_1, &blend_area);
         i++;
-        esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, blend_area.buf_area);
+        // esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, blend_area.buf_area);
+        blend_sw_img_draw_example();
 
         total_frames++;
         break;

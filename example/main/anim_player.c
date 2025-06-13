@@ -18,13 +18,45 @@ static const char *TAG = "player";
 
 static anim_player_handle_t handle = NULL;
 
+extern esp_lcd_panel_handle_t panel_handle;
+
+void mem_monitor()
+{
+    static char buffer[256];    /* Make sure buffer is enough for `sprintf` */
+    sprintf(buffer, "   Biggest /     Free /    Total\n"
+            "\t  SRAM : [%8d K / %8d K / %8d K]\n"
+            "\t PSRAM : [%8d K / %8d K / %8d K]",
+            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024,
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024,
+            heap_caps_get_total_size(MALLOC_CAP_INTERNAL) / 1024,
+            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024,
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024,
+            heap_caps_get_total_size(MALLOC_CAP_SPIRAM) / 1024);
+    ESP_LOGI("MEM", "%s", buffer);
+}
+
 static void anim_flush_cb(anim_player_handle_t handle, int x1, int y1, int x2, int y2, const void *data)
+#if 1
 {
     lv_obj_t *flush_canvas = (lv_obj_t *)anim_player_get_user_data(handle);
 
-    lv_canvas_copy_buf(flush_canvas, (const void *)data, (lv_coord_t)x1, (lv_coord_t)y1, (lv_coord_t)(x2 - x1), (lv_coord_t)(y2 - y1));
+    // int64_t start_time = esp_timer_get_time();
+    // lv_canvas_copy_buf(flush_canvas, (const void *)data, (lv_coord_t)x1, (lv_coord_t)y1, (lv_coord_t)(x2 - x1), (lv_coord_t)(y2 - y1));
+    // int64_t end_time = esp_timer_get_time();
+    // ESP_LOGI(TAG, "Flush time: %lld us", end_time - start_time);
     anim_player_flush_ready(handle);
 }
+#else
+{
+    // esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)anim_player_get_user_data(handle);
+    // if(y1 == 0) {
+        // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
+    // }
+    // esp_lcd_panel_draw_bitmap(panel_handle, x1, y1, x2, y2, data);
+    anim_player_flush_ready(handle);
+    // ESP_LOGI(TAG, "Flush ready");
+}
+#endif
 
 static void anim_update_cb(anim_player_handle_t handle, player_event_t event)
 {
@@ -37,25 +69,27 @@ static void anim_update_cb(anim_player_handle_t handle, player_event_t event)
         ESP_LOGI(TAG, "Event: IDLE");
         break;
     case PLAYER_EVENT_ONE_FRAME_DONE:
+        // ESP_LOGI(TAG, "Event: ONE_FRAME_DONE");
         if (start_time == 0) {
             start_time = esp_timer_get_time();
         }
         total_frames++;
-        bsp_display_lock(0);
-        lv_obj_invalidate(flush_canvas);
+        // bsp_display_lock(0);
+        // lv_obj_invalidate(flush_canvas);
         // lv_refr_now(NULL);
-        bsp_display_unlock();
+        // bsp_display_unlock();
         break;
     case PLAYER_EVENT_ALL_FRAME_DONE:
         {
             uint32_t end_time = esp_timer_get_time();
             float duration_sec = (end_time - start_time) / 1000000.0f;
-            float fps = total_frames / duration_sec;
+            float fps = (total_frames -1) / duration_sec;
             ESP_LOGI(TAG, "Event: ALL_FRAME_DONE - FPS: %.2f (Frames: %d, Duration: %.2fs)", 
                     fps, total_frames, duration_sec);
             // Reset counters for next playback
             start_time = 0;
             total_frames = 0;
+            // mem_monitor();
         }
         break;
     default:
@@ -89,7 +123,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     lv_obj_set_size(canvas, 240, 400);
     lv_obj_clear_flag(canvas, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(canvas, LV_ALIGN_CENTER, 0, 0);
-    uint8_t *canvas_draw_buf  = heap_caps_malloc(240 * 400 * sizeof(uint16_t), MALLOC_CAP_DEFAULT);
+    uint8_t *canvas_draw_buf  = heap_caps_malloc(240 * 400 * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     lv_canvas_set_buffer(canvas, (void *)canvas_draw_buf, 240, 400, LV_IMG_CF_TRUE_COLOR);
 
     bsp_display_unlock();
@@ -101,8 +135,10 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         .flags = {.swap = true},
         .task = ANIM_PLAYER_INIT_CONFIG()
     };
-    config.task.task_stack_caps = MALLOC_CAP_INTERNAL;
+    // config.task.task_stack_caps = MALLOC_CAP_INTERNAL;
+    config.task.task_stack_caps = MALLOC_CAP_DEFAULT;
     config.task.task_affinity = 1;
+    config.task.task_priority = 7;
 
     handle = anim_player_init(&config);
 
@@ -114,7 +150,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     ESP_LOGW(TAG, "set src, %s", mmap_assets_get_name(assets_handle, MMAP_ASSETS_OUTPUT_AAF));
     anim_player_set_src_data(handle, src_data, src_len);
     anim_player_get_segment(handle, &start, &end);
-    anim_player_set_segment(handle, start, end, 40, true);
+    anim_player_set_segment(handle, start, end, 50, true);
     ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
 
     anim_player_update(handle, PLAYER_ACTION_START);
@@ -124,6 +160,5 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
 void app_main(void)
 {
     printf("Animation player test\n");
-    // unity_run_menu();
     test_anim_player_common("assets_8bit", MMAP_ASSETS_FILES, MMAP_ASSETS_CHECKSUM, 5);
 }

@@ -120,6 +120,19 @@ void anim_player_set_segment(anim_player_handle_t handle, uint32_t start, uint32
  */
 void *anim_player_get_user_data(anim_player_handle_t handle);
 
+/**
+ * @brief Add a child element to the animation player
+ * 
+ * @param handle Animation player handle
+ * @param type Type of the child element
+ * @param src Source data pointer
+ * @param len Length of the source data
+ * @param x1 X coordinate position
+ * @param y1 Y coordinate position
+ * @return esp_err_t ESP_OK on success, otherwise an error code
+ */
+esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src, size_t len, uint16_t x1, uint16_t y1);
+
 #ifdef __cplusplus
 }
 #endif

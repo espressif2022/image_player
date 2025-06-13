@@ -10,10 +10,14 @@
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
 #include "bsp/esp-bsp.h"
+#include "esp_timer.h"
 
 #include "anim_player.h"
 #include "mmap_generate_test_4bit.h"
 #include "mmap_generate_test_8bit.h"
+
+#include "ft_label.h"
+#include "mmap_generate_spiffs_assets.h"
 
 static const char *TAG = "player";
 
@@ -25,6 +29,10 @@ static size_t before_free_32bit;
 static anim_player_handle_t handle = NULL;
 static esp_lcd_panel_io_handle_t io_handle = NULL;
 static esp_lcd_panel_handle_t panel_handle = NULL;
+
+uint16_t *frame_buffer = NULL;
+ft_font_handle_t font_1;
+ft_blend_area_t blend_area;
 
 void setUp(void)
 {
@@ -50,23 +58,62 @@ static bool flush_io_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_
 static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, int y2, const void *data)
 {
     esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)anim_player_get_user_data(handle);
-    if(y1 == 0) {
-        ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
+    // if(y1 == 0) {
+    //     ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
+    // }
+    // esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
+    // anim_player_flush_ready(handle);
+    // return;
+    if (y1 > 320) {
+        anim_player_flush_ready(handle);
+        return;
     }
-    esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
+
+    int end_y = y2;
+    if (y2 > 320) {
+        anim_player_flush_ready(handle);
+        end_y = 320;
+    }
+    // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, end_y);
+    memcpy(frame_buffer + y1 * 240 + x1, data, (x2 - x1) * (end_y - y1) * sizeof(uint16_t));
+    anim_player_flush_ready(handle);
 }
 
 static void update_callback(anim_player_handle_t handle, player_event_t event)
 {
+    static uint32_t start_time = 0;
+    static int total_frames = 0;
+
     switch (event) {
     case PLAYER_EVENT_IDLE:
         ESP_LOGI(TAG, "Event: IDLE");
         break;
     case PLAYER_EVENT_ONE_FRAME_DONE:
-        // ESP_LOGW(TAG, "Event: ONE_FRAME_DONE");
+        // ESP_LOGI(TAG, "Event: ONE_FRAME_DONE");
+        if (start_time == 0) {
+            start_time = esp_timer_get_time();
+        }
+        char buffer[30] = {0};
+        static uint8_t i = 0;
+        // if(i%2 == 0) {
+            sprintf(buffer, "Blending test %d", i);
+            ft_label_set_text(font_1, (const char *)buffer);
+            ft_label_render_text(font_1, &blend_area);
+        // }
+        i++;
+        esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, blend_area.buf_area);
+
+        total_frames++;
         break;
     case PLAYER_EVENT_ALL_FRAME_DONE:
-        ESP_LOGI(TAG, "Event: ALL_FRAME_DONE");
+        uint32_t end_time = esp_timer_get_time();
+        float duration_sec = (end_time - start_time) / 1000000.0f;
+        float fps = (total_frames - 1) / duration_sec;
+        ESP_LOGI(TAG, "Event: ALL_FRAME_DONE - FPS: %.2f (Frames: %d, Duration: %.2fs)",
+                 fps, total_frames, duration_sec);
+        // Reset counters for next playback
+        start_time = 0;
+        total_frames = 0;
         break;
     default:
         ESP_LOGI(TAG, "Event: UNKNOWN");
@@ -106,10 +153,61 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         .flags = {.swap = true},
         .task = ANIM_PLAYER_INIT_CONFIG()
     };
-    config.task.task_stack_caps = MALLOC_CAP_INTERNAL;
+    // config.task.task_stack_caps = MALLOC_CAP_INTERNAL;
+    config.task.task_stack_caps = MALLOC_CAP_DEFAULT;
+    config.task.task_affinity = 1;
+    config.task.task_priority = 7;
+
+    frame_buffer = (uint16_t *)heap_caps_malloc(240 * 320 * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    assert(frame_buffer != NULL);
+
+    blend_area.width = 240;
+    blend_area.height = 320;
+    blend_area.buf_area = (uint8_t *)frame_buffer;
+
+    mmap_assets_handle_t assets_font = NULL;
+    const mmap_assets_config_t asset_config_font = {
+        .partition_label = "assets",
+        .max_files = MMAP_SPIFFS_ASSETS_FILES,
+        .checksum = MMAP_SPIFFS_ASSETS_CHECKSUM,
+        .flags = {.mmap_enable = true, .full_check = true}
+    };
+
+    ret = mmap_assets_new(&asset_config_font, &assets_font);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize assets");
+        return;
+    }
+
+    ft_lib_handle_t ft_lib = NULL;
+    TEST_ESP_OK(ft_library_create(&ft_lib));
+
+    ft_label_cfg_t font_config;
+
+    font_config.name = "DejaVuSans.ttf";
+    font_config.mem = mmap_assets_get_mem(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
+    font_config.mem_size = mmap_assets_get_size(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
+
+    //create font1
+    ESP_LOGI(TAG, "Create test font:%p", font_config.mem);
+
+    TEST_ESP_OK(ft_label_new_font(ft_lib, &font_config, &font_1));
+    TEST_ESP_OK(ft_label_set_color(font_1, FT_COLOR_HEX(0xFF0000)));
+    TEST_ESP_OK(ft_label_set_opa(font_1, 0xFF));
+    TEST_ESP_OK(ft_label_set_font_size(font_1, 15));
+
+    TEST_ESP_OK(ft_label_set_size(font_1, 200, 50));
+    // TEST_ESP_OK(ft_label_set_pos(font_1, 80, 150));
+    TEST_ESP_OK(ft_label_set_pos(font_1, 0, 0));
+
+    TEST_ESP_OK(ft_label_set_text(font_1, "Blending test"));
 
     handle = anim_player_init(&config);
     TEST_ASSERT_NOT_NULL(handle);
+
+    anim_player_add_child(handle, 0, NULL, 0, 0, 0);
+    anim_player_add_child(handle, 1, NULL, 100, 10, 10);
+    anim_player_add_child(handle, 2, NULL, 200, 20, 20);
 
     const esp_lcd_panel_io_callbacks_t cbs = {
         .on_color_trans_done = flush_io_ready,
@@ -119,8 +217,10 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     uint32_t start, end;
     const void *src_data;
     size_t src_len;
-    
-    for(int i = 0; i < mmap_assets_get_stored_files(assets_handle); i++) {
+
+    for (int i = 0; i < mmap_assets_get_stored_files(assets_handle); i++) {
+
+        i = MMAP_TEST_8BIT_OUTPUT_AAF;
 
         src_data = mmap_assets_get_mem(assets_handle, i);
         src_len = mmap_assets_get_size(assets_handle, i);
@@ -128,7 +228,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         ESP_LOGW(TAG, "set src, %s", mmap_assets_get_name(assets_handle, i));
         anim_player_set_src_data(handle, src_data, src_len);
         anim_player_get_segment(handle, &start, &end);
-        anim_player_set_segment(handle, start, end, 20, true);
+        anim_player_set_segment(handle, start, end, 50, true);
         ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
 
         anim_player_update(handle, PLAYER_ACTION_START);
@@ -174,5 +274,7 @@ TEST_CASE("test anim player init and deinit", "[anim_player][8bit]")
 void app_main(void)
 {
     printf("Animation player test\n");
-    unity_run_menu();
+    // unity_run_menu();
+
+    test_anim_player_common("assets_8bit", MMAP_TEST_8BIT_FILES, MMAP_TEST_8BIT_CHECKSUM, 5000);
 }

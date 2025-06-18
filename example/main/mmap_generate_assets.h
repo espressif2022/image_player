@@ -13,9 +13,10 @@
 
 #include "esp_mmap_assets.h"
 
-#define MMAP_ASSETS_FILES           1
-#define MMAP_ASSETS_CHECKSUM        0x0CB1
+#define MMAP_ASSETS_FILES           2
+#define MMAP_ASSETS_CHECKSUM        0x0E18
 
 enum MMAP_ASSETS_LISTS {
-    MMAP_ASSETS_OUTPUT_AAF = 0,        /*!< output.aaf */
+    MMAP_ASSETS_BUG_AAF = 0,        /*!< bug.aaf */
+    MMAP_ASSETS_OUTPUT_AAF = 1,        /*!< output.aaf */
 };

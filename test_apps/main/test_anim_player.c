@@ -80,99 +80,117 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
     anim_player_flush_ready(handle);
 }
 
+extern const lv_img_dsc_t picture;
+
+extern const lv_image_dsc_t icon1;
+extern const lv_image_dsc_t icon2;
+extern const lv_image_dsc_t icon3;
+extern const lv_image_dsc_t icon4;
+extern const lv_image_dsc_t icon5;
+
 /* Example function to demonstrate how to use blend_sw_img_draw */
-void blend_sw_img_draw_example(void)
+void blend_sw_img_draw_example(ft_blend_area_t *blend_area)
 {
     /* Define image dimensions */
     const int32_t img_width = 240;
     const int32_t img_height = 320;
-    const int32_t square_size = 100;
-    
+    const int32_t square_size = 240;
+
+    ESP_LOGI(TAG, "blend_area->buf_area: %p, %d, %d", blend_area->buf_area, blend_area->width, blend_area->height);
+
     /* Create source and destination buffers */
     blend_color_t *src_buf = malloc(square_size * square_size * sizeof(blend_color_t));
-    label_opa_t *mask_buf = malloc(square_size * square_size * sizeof(label_opa_t));
-    blend_color_t *dest_buf = malloc(img_width * img_height * sizeof(blend_color_t));
-    
-    if (!src_buf || !dest_buf || !mask_buf) {
+    blend_color_t *dest_buf = (blend_color_t *)blend_area->buf_area;
+
+    if (!src_buf) {
         /* Handle memory allocation error */
         free(src_buf);
-        free(dest_buf);
-        free(mask_buf);
         return;
     }
 
-    /* Initialize destination buffer with red color and swap16 */
-    for (int i = 0; i < img_width * img_height; i++) {
-        dest_buf[i].full = 0xF800;  /* Red color (RGB565 format) */
-        dest_buf[i].full = (dest_buf[i].full << 8) | (dest_buf[i].full >> 8);  /* Swap16 */
-    }
-    
-    /* Calculate center position for 100x100 square */
-    const int32_t start_x = (img_width - square_size) / 2;
-    const int32_t start_y = (img_height - square_size) / 2;
-    
-    /* Initialize source image with white square and swap16 */
-    for (int i = 0; i < square_size * square_size; i++) {
-        src_buf[i].full = 0xFFFF;  /* White color */
+#define POSITION_1_X 50
+#define POSITION_1_Y 50
+
+#define POSITION_2_X 50
+#define POSITION_2_Y 150
+
+    label_area_t clip_area = {
+        .x1 = POSITION_1_X,
+        .y1 = POSITION_1_Y,
+        .x2 = POSITION_1_X + 65,
+        .y2 = POSITION_1_Y + 65
+    };
+
+    /* Calculate the starting position in dest_buf */
+    blend_color_t *dest_start = dest_buf + POSITION_1_Y * blend_area->width + POSITION_1_X;
+
+    const uint16_t *data_pic = (const uint16_t *)icon1.data;
+    const uint8_t *mask = (const uint8_t *)icon1.data + 65 * 65 * 2;
+
+    for (int i = 0; i < 65 * 65; i++) {
+        src_buf[i].full = *(data_pic + i);
         src_buf[i].full = (src_buf[i].full << 8) | (src_buf[i].full >> 8);  /* Swap16 */
     }
-    
-    static uint8_t mask_value = 10;
-    /* Initialize mask buffer with 90% opacity */
-    for (int i = 0; i < square_size * square_size; i++) {
-        // mask_buf[i] = 80*255/100;  /* 90% opacity */
-        mask_buf[i] = mask_value*255/100;  /* 90% opacity */
-    }
-    mask_value += 10;
-    if (mask_value > 100) {
-        mask_value = 10;
-    }
-    ESP_LOGI(TAG, "mask_value: %d %%", mask_value);
-    
-    /* Define clip area for the square */
-    label_area_t clip_area = {
-        .x1 = start_x,
-        .y1 = start_y,
-        .x2 = start_x + square_size - 1,
-        .y2 = start_y + square_size - 1
-    };
-    ESP_LOGI(TAG, "clip_area: (%d, %d) (%d, %d)", clip_area.x1, clip_area.y1, clip_area.x2, clip_area.y2);
-    
-    /* Calculate the starting position in dest_buf */
-    blend_color_t *dest_start = dest_buf + start_y * img_width + start_x;
-    
-    /* Call blend_sw_img_draw to blend the images */
+
+    int64_t start_time, end_time;
+
+    start_time = esp_timer_get_time();
+
     blend_sw_img_draw(
-        dest_start,         /* Destination buffer starting position */
+        (blend_color_t *)dest_start,         /* Destination buffer starting position */
         img_width,          /* Destination stride */
-        src_buf,            /* Source buffer */
-        square_size,        /* Source stride */
-        mask_buf,           /* Mask buffer */
-        square_size,        /* Mask stride */
+        src_buf,
+        65,        /* Source stride */
+        (const label_opa_t *)mask,           /* Mask buffer */
+        65,        /* Mask stride */
         &clip_area,         /* Clip area */
         255                 /* Global opacity (fully opaque) */
     );
+    end_time = esp_timer_get_time();
+    ESP_LOGW(TAG, "sw_img_draw: %.2f ms", (float)(end_time - start_time) / 1000.0f);
 
-    ESP_LOGI(TAG, "blend_sw_img_draw done");
+    data_pic = (const uint16_t *)icon3.data;
+    mask = (const uint8_t *)icon3.data + 30 * 30 * 2;
 
-    /* Swap16 before drawing to LCD */
-    // for (int i = 0; i < img_width * img_height; i++) {
-    //     dest_buf[i].full = (dest_buf[i].full << 8) | (dest_buf[i].full >> 8);
-    // }
+    clip_area.x1 = POSITION_2_X;
+    clip_area.y1 = POSITION_2_Y;
+    clip_area.x2 = POSITION_2_X + 30;
+    clip_area.y2 = POSITION_2_Y + 30;
+
+    dest_start = dest_buf + POSITION_2_Y * blend_area->width + POSITION_2_X;
+
+    for (int i = 0; i < 30 * 30; i++) {
+        src_buf[i].full = *(data_pic + i);
+        src_buf[i].full = (src_buf[i].full << 8) | (src_buf[i].full >> 8);  /* Swap16 */
+    }
+
+    start_time = esp_timer_get_time();
+
+    blend_sw_img_draw(
+        (blend_color_t *)dest_start,         /* Destination buffer starting position */
+        img_width,          /* Destination stride */
+        src_buf,
+        30,        /* Source stride */
+        (const label_opa_t *)mask,           /* Mask buffer */
+        30,        /* Mask stride */
+        &clip_area,         /* Clip area */
+        255                 /* Global opacity (fully opaque) */
+    ); end_time = esp_timer_get_time();
+    ESP_LOGW(TAG, "sw_img_draw: %.2f ms", (float)(end_time - start_time) / 1000.0f);
 
     esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, dest_buf);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     /* Clean up */
     free(src_buf);
-    free(dest_buf);
-    free(mask_buf);
 }
 
 static void update_callback(anim_player_handle_t handle, player_event_t event)
 {
     static uint32_t start_time = 0;
     static int total_frames = 0;
+
+    int64_t start_time_label, end_time_label;
 
     switch (event) {
     case PLAYER_EVENT_IDLE:
@@ -187,10 +205,14 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
         static uint8_t i = 0;
         sprintf(buffer, "Blending test %d", i);
         ft_label_set_text(font_1, (const char *)buffer);
+
+        start_time_label = esp_timer_get_time();
         ft_label_render_text(font_1, &blend_area);
+        end_time_label = esp_timer_get_time();
+        ESP_LOGW(TAG, "label_render: %.2f ms", (float)(end_time_label - start_time_label) / 1000.0f);
         i++;
         // esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, blend_area.buf_area);
-        blend_sw_img_draw_example();
+        blend_sw_img_draw_example(&blend_area);
 
         total_frames++;
         break;

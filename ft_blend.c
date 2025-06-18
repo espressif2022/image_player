@@ -137,9 +137,9 @@ void blend_sw_draw(blend_color_t *dest_buf, label_coord_t dest_stride,
 }
 
 void blend_sw_img_draw(blend_color_t *dest_buf, label_coord_t dest_stride,
-                      const blend_color_t *src_buf, label_coord_t src_stride,
-                      const label_opa_t *mask, label_coord_t mask_stride,
-                      label_area_t *clip_area, label_opa_t opa)
+                       const blend_color_t *src_buf, label_coord_t src_stride,
+                       const label_opa_t *mask, label_coord_t mask_stride,
+                       label_area_t *clip_area, label_opa_t opa)
 {
     int32_t w = clip_area->x2 - clip_area->x1;
     int32_t h = clip_area->y2 - clip_area->y1;
@@ -147,19 +147,21 @@ void blend_sw_img_draw(blend_color_t *dest_buf, label_coord_t dest_stride,
     int32_t x, y;
     blend_color_t last_dest_color;
     blend_color_t last_res_color;
+    blend_color_t last_src_color;
     label_opa_t last_mask = OPA_TRANSP;
     last_dest_color.full = dest_buf[0].full;
     last_res_color.full = dest_buf[0].full;
+    last_src_color.full = src_buf[0].full;
     label_opa_t opa_tmp = OPA_TRANSP;
 
     for (y = 0; y < h; y++) {
         for (x = 0; x < w; x++) {
             if (mask == NULL || *mask) {
                 if (mask && *mask != last_mask) {
-                    opa_tmp = *mask == OPA_COVER ? opa : (uint32_t)((uint32_t)(*mask) * opa) >> 8;
+                    opa_tmp = (*mask == OPA_COVER) ? opa : (uint32_t)((uint32_t)(*mask) * opa) >> 8;
                 }
-                
-                if (mask == NULL || *mask != last_mask || last_dest_color.full != dest_buf[x].full) {
+
+                if (mask == NULL || *mask != last_mask || last_dest_color.full != dest_buf[x].full || last_src_color.full != src_buf[x].full) {
                     if (opa_tmp == OPA_COVER) {
                         last_res_color = src_buf[x];
                     } else {
@@ -169,6 +171,9 @@ void blend_sw_img_draw(blend_color_t *dest_buf, label_coord_t dest_stride,
                         last_mask = *mask;
                     }
                     last_dest_color.full = dest_buf[x].full;
+                    last_src_color.full = src_buf[x].full;
+                } else {
+                    // ESP_LOGI("blend", "1:%d, 2:%d, 3:%d", *mask != last_mask, last_dest_color.full != dest_buf[x].full, last_src_color.full != src_buf[x].full);
                 }
                 dest_buf[x] = last_res_color;
             }

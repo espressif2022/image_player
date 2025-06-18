@@ -8,3 +8,21 @@ menu "Animation Player Configuration"
             Default frame rate for animation player in frames per second.
 
 endmenu
+
+menu "FT label color settings"
+
+    choice LABEL_COLOR_DEPTH
+        prompt "Color depth."
+        default LABEL_COLOR_DEPTH_16
+        help
+            Color depth to be used.
+
+        config LABEL_COLOR_DEPTH_16
+            bool "16: RGB565"
+    endchoice
+
+    config LABEL_COLOR_16_SWAP
+        bool "Swap the 2 bytes of RGB565 color."
+        depends on LABEL_COLOR_DEPTH_16
+        default n
+endmenu

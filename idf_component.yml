@@ -9,5 +9,6 @@ dependencies:
     version: 0.*
   idf:
     version: '>=5.0'
+  espressif/freetype: "2.*"
 examples:
   - path: ./example

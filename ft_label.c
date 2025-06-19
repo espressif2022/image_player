@@ -28,6 +28,7 @@ typedef struct {
     label_coord_t y;        /*!< Y coordinate of the label's position */
     uint16_t width;         /*!< Width of the label */
     uint16_t height;        /*!< Height of the label */
+    uint8_t *mask;
 } ft_label_property_t;
 
 typedef struct face_entry {
@@ -325,7 +326,7 @@ esp_err_t ft_label_set_size(ft_font_handle_t handle, int16_t w, int16_t h)
     return ESP_OK;
 }
 
-esp_err_t ft_label_render_text(ft_font_handle_t handle, ft_blend_area_t *blend_area)
+esp_err_t ft_sw_draw_label(ft_font_handle_t handle, ft_blend_area_t *blend_area)
 {
     ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
     ESP_RETURN_ON_FALSE(blend_area, ESP_ERR_INVALID_ARG, TAG, "invalid blend_area");
@@ -344,6 +345,12 @@ esp_err_t ft_label_render_text(ft_font_handle_t handle, ft_blend_area_t *blend_a
     label_coord_t mask_stride = font_info->width;
     label_coord_t dest_stride = buf_area_w;
 
+
+    if(font_info->mask) {
+        ESP_LOGI(TAG, "mask already rendered");
+        return ESP_OK;
+    }
+
     label_opa_t *mask_buf = (label_opa_t *)malloc(font_info->width * font_info->height);
     ESP_RETURN_ON_FALSE(mask_buf, ESP_ERR_NO_MEM, TAG, "no mem for mask_buf");
     label_opa_t *mask = (label_opa_t *)mask_buf;
@@ -359,7 +366,7 @@ esp_err_t ft_label_render_text(ft_font_handle_t handle, ft_blend_area_t *blend_a
     clip_area.y1 = font_info->y >= 0 ? 0 : (0 - font_info->y);
     clip_area.y2 = font_info->y + font_info->height <= buf_area_h ? font_info->height : (buf_area_h - font_info->y);
 
-    ESP_LOGD(TAG, "clip:col:%d->%d in [%d], row:%d->%d in [%d], position:[%d,%d]",
+    ESP_LOGI(TAG, "clip:col:%d->%d in [%d], row:%d->%d in [%d], position:[%d,%d]",
              clip_area.x1, clip_area.x2, font_info->width,
              clip_area.y1, clip_area.y2, font_info->height,
              font_info->x, font_info->y);
@@ -435,14 +442,56 @@ esp_err_t ft_label_render_text(ft_font_handle_t handle, ft_blend_area_t *blend_a
         }
     }
 
+    ESP_LOGI(TAG, "mask: %p", mask);
+    font_info->mask = mask;
+
+    // dest += dest_stride * (font_info->y > 0 ? font_info->y : 0) + (font_info->x > 0 ? font_info->x : 0);
+    // mask += mask_stride * (clip_area.y1 > 0 ? clip_area.y1 : 0) + (clip_area.x1 > 0 ? clip_area.x1 : 0);
+
+    // blend_sw_draw(dest, dest_stride, font_info->color, font_info->opa, mask, &clip_area, mask_stride);
+
+err:
+    // if (mask_buf) {
+    //     free(mask_buf);
+    // }
+    return ret;
+}
+
+esp_err_t ft_label_render_mask(ft_font_handle_t handle, ft_blend_area_t *blend_area)
+{
+    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(blend_area, ESP_ERR_INVALID_ARG, TAG, "invalid blend_area");
+    ESP_RETURN_ON_FALSE(blend_area->buf_area, ESP_ERR_INVALID_ARG, TAG, "invalid blend_area->buf_area");
+
+    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    ESP_RETURN_ON_FALSE(font_info->text, ESP_ERR_INVALID_ARG, TAG, "Text is NULL");
+
+    int buf_area_w = blend_area->width;
+    int buf_area_h = blend_area->height;
+    blend_color_t *dest = (blend_color_t *)blend_area->buf_area;
+
+    label_coord_t mask_stride = font_info->width;
+    label_coord_t dest_stride = buf_area_w;
+
+    label_area_t clip_area;
+    clip_area.x1 = font_info->x >= 0 ? 0 : (0 - font_info->x);
+    clip_area.x2 = font_info->x + font_info->width <= buf_area_w ? font_info->width : (buf_area_w - font_info->x);
+    clip_area.y1 = font_info->y >= 0 ? 0 : (0 - font_info->y);
+    clip_area.y2 = font_info->y + font_info->height <= buf_area_h ? font_info->height : (buf_area_h - font_info->y);
+
+
+    label_opa_t *mask = font_info->mask;
+
     dest += dest_stride * (font_info->y > 0 ? font_info->y : 0) + (font_info->x > 0 ? font_info->x : 0);
     mask += mask_stride * (clip_area.y1 > 0 ? clip_area.y1 : 0) + (clip_area.x1 > 0 ? clip_area.x1 : 0);
 
     blend_sw_draw(dest, dest_stride, font_info->color, font_info->opa, mask, &clip_area, mask_stride);
 
-err:
-    if (mask_buf) {
-        free(mask_buf);
-    }
-    return ret;
+    return ESP_OK;
+}
+
+void ft_label_print_info(void *src)
+{
+    ft_label_property_t *font_info = (ft_label_property_t *)src;
+    ESP_LOGI(TAG, "font info: x:%d, y:%d, width:%d, height:%d", font_info->x, font_info->y, font_info->width, font_info->height);
 }

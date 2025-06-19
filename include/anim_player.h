@@ -43,6 +43,7 @@ typedef struct {
 
     struct {
         unsigned char swap:1;
+        unsigned char need_blend:1;
     } flags;
     struct {
         int task_priority;      ///< Task priority (1-20)
@@ -131,7 +132,12 @@ void *anim_player_get_user_data(anim_player_handle_t handle);
  * @param y1 Y coordinate position
  * @return esp_err_t ESP_OK on success, otherwise an error code
  */
-esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src, size_t len, uint16_t x1, uint16_t y1);
+esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src);
+
+typedef enum {
+    CHILD_TYPE_LABEL = 0,
+    CHILD_TYPE_IMAGE,
+} anim_player_child_type_t;
 
 #ifdef __cplusplus
 }

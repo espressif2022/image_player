@@ -8,6 +8,7 @@
 
 #include "esp_err.h"
 
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -249,7 +250,11 @@ esp_err_t ft_label_set_text_fmt(ft_font_handle_t handle, const char * fmt, ...);
  *      - ESP_OK: Success
  *      - Other error codes
  */
-esp_err_t ft_label_render_text(ft_font_handle_t handle, ft_blend_area_t *blend_cfg);
+esp_err_t ft_sw_draw_label(ft_font_handle_t handle, ft_blend_area_t *blend_cfg);
+
+esp_err_t ft_label_render_mask(ft_font_handle_t handle, ft_blend_area_t *blend_area);
+
+void ft_label_print_info(void *src);
 
 #ifdef __cplusplus
 }

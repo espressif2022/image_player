@@ -18,6 +18,7 @@
 
 #include "ft_label.h"
 #include "ft_blend.h"
+#include "object.h"
 #include "mmap_generate_spiffs_assets.h"
 
 static const char *TAG = "player";
@@ -32,7 +33,7 @@ static esp_lcd_panel_io_handle_t io_handle = NULL;
 static esp_lcd_panel_handle_t panel_handle = NULL;
 
 uint16_t *frame_buffer = NULL;
-ft_font_handle_t font_1;
+ft_font_handle_t obj_label;
 ft_blend_area_t blend_area;
 
 void setUp(void)
@@ -80,23 +81,18 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
     anim_player_flush_ready(handle);
 }
 
-extern const lv_img_dsc_t picture;
-
 extern const lv_image_dsc_t icon1;
 extern const lv_image_dsc_t icon2;
 extern const lv_image_dsc_t icon3;
 extern const lv_image_dsc_t icon4;
 extern const lv_image_dsc_t icon5;
+extern const lv_image_dsc_t icon5_new;
 
 /* Example function to demonstrate how to use blend_sw_img_draw */
 void blend_sw_img_draw_example(ft_blend_area_t *blend_area)
 {
-    /* Define image dimensions */
-    const int32_t img_width = 240;
-    const int32_t img_height = 320;
     const int32_t square_size = 240;
-
-    ESP_LOGI(TAG, "blend_area->buf_area: %p, %d, %d", blend_area->buf_area, blend_area->width, blend_area->height);
+    // ESP_LOGI(TAG, "blend_area->buf_area: %p, %d, %d", blend_area->buf_area, blend_area->width, blend_area->height);
 
     /* Create source and destination buffers */
     blend_color_t *src_buf = malloc(square_size * square_size * sizeof(blend_color_t));
@@ -111,8 +107,8 @@ void blend_sw_img_draw_example(ft_blend_area_t *blend_area)
 #define POSITION_1_X 50
 #define POSITION_1_Y 50
 
-#define POSITION_2_X 50
-#define POSITION_2_Y 150
+#define POSITION_2_X 150
+#define POSITION_2_Y 60
 
     label_area_t clip_area = {
         .x1 = POSITION_1_X,
@@ -138,7 +134,7 @@ void blend_sw_img_draw_example(ft_blend_area_t *blend_area)
 
     blend_sw_img_draw(
         (blend_color_t *)dest_start,         /* Destination buffer starting position */
-        img_width,          /* Destination stride */
+        240,          /* Destination stride */
         src_buf,
         65,        /* Source stride */
         (const label_opa_t *)mask,           /* Mask buffer */
@@ -168,7 +164,7 @@ void blend_sw_img_draw_example(ft_blend_area_t *blend_area)
 
     blend_sw_img_draw(
         (blend_color_t *)dest_start,         /* Destination buffer starting position */
-        img_width,          /* Destination stride */
+        240,          /* Destination stride */
         src_buf,
         30,        /* Source stride */
         (const label_opa_t *)mask,           /* Mask buffer */
@@ -177,9 +173,6 @@ void blend_sw_img_draw_example(ft_blend_area_t *blend_area)
         255                 /* Global opacity (fully opaque) */
     ); end_time = esp_timer_get_time();
     ESP_LOGW(TAG, "sw_img_draw: %.2f ms", (float)(end_time - start_time) / 1000.0f);
-
-    esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, dest_buf);
-    vTaskDelay(pdMS_TO_TICKS(100));
 
     /* Clean up */
     free(src_buf);
@@ -201,19 +194,24 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
         if (start_time == 0) {
             start_time = esp_timer_get_time();
         }
-        char buffer[30] = {0};
-        static uint8_t i = 0;
-        sprintf(buffer, "Blending test %d", i);
-        ft_label_set_text(font_1, (const char *)buffer);
 
-        start_time_label = esp_timer_get_time();
-        ft_label_render_text(font_1, &blend_area);
-        end_time_label = esp_timer_get_time();
-        ESP_LOGW(TAG, "label_render: %.2f ms", (float)(end_time_label - start_time_label) / 1000.0f);
-        i++;
-        // esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, blend_area.buf_area);
-        blend_sw_img_draw_example(&blend_area);
+        /* label */
+        // char buffer[30] = {0};
+        // static uint8_t i = 0;
+        // i++;
+        // sprintf(buffer, "Blending test %d", i);
+        // ft_label_set_text(obj_label, (const char *)buffer);
 
+        // start_time_label = esp_timer_get_time();
+        // ft_sw_draw_label(obj_label, &blend_area);
+        // end_time_label = esp_timer_get_time();
+        // ESP_LOGW(TAG, "sw_label_draw: %.2f ms", (float)(end_time_label - start_time_label) / 1000.0f);
+
+        /* image */
+        // blend_sw_img_draw_example(&blend_area);
+
+        /* draw */
+        esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, blend_area.buf_area);
         total_frames++;
         break;
     case PLAYER_EVENT_ALL_FRAME_DONE:
@@ -261,7 +259,10 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         .flush_cb = flush_callback,
         .update_cb = update_callback,
         .user_data = panel_handle,
-        .flags = {.swap = true},
+        .flags = {
+            .swap = true,
+            .need_blend = true,
+        },
         .task = ANIM_PLAYER_INIT_CONFIG()
     };
     // config.task.task_stack_caps = MALLOC_CAP_INTERNAL;
@@ -290,8 +291,25 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         return;
     }
 
-    ft_lib_handle_t ft_lib = NULL;
-    TEST_ESP_OK(ft_library_create(&ft_lib));
+    // ft_lib_handle_t ft_lib = NULL;
+    // TEST_ESP_OK(ft_library_create(&ft_lib));
+
+    //create font1
+    // ESP_LOGI(TAG, "Create test font:%p", font_config.mem);
+
+    // TEST_ESP_OK(ft_label_new_font(ft_lib, &font_config, &obj_label));
+    // TEST_ESP_OK(ft_label_set_color(obj_label, FT_COLOR_HEX(0xFF0000)));
+    // TEST_ESP_OK(ft_label_set_opa(obj_label, 0xFF));
+    // TEST_ESP_OK(ft_label_set_font_size(obj_label, 15));
+
+    // TEST_ESP_OK(ft_label_set_size(obj_label, 200, 50));
+    // TEST_ESP_OK(ft_label_set_pos(obj_label, 0, 30));
+
+    // TEST_ESP_OK(ft_label_set_text(obj_label, "Blending test"));
+
+    handle = anim_player_init(&config);
+
+    gfx_font_init();
 
     ft_label_cfg_t font_config;
 
@@ -299,26 +317,20 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     font_config.mem = mmap_assets_get_mem(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
     font_config.mem_size = mmap_assets_get_size(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
 
-    //create font1
-    ESP_LOGI(TAG, "Create test font:%p", font_config.mem);
+    gfx_obj_t *label1 = gfx_label_create(&font_config, handle);
+    gfx_obj_set_pos(label1, 100, 100);
+    gfx_obj_set_size(label1, 200, 50);
 
-    TEST_ESP_OK(ft_label_new_font(ft_lib, &font_config, &font_1));
-    TEST_ESP_OK(ft_label_set_color(font_1, FT_COLOR_HEX(0xFF0000)));
-    TEST_ESP_OK(ft_label_set_opa(font_1, 0xFF));
-    TEST_ESP_OK(ft_label_set_font_size(font_1, 15));
+    ft_label_set_color(label1->src, FT_COLOR_HEX(0xFF0000));
+    ft_label_set_opa(label1->src, 0xFF);
+    ft_label_set_font_size(label1->src, 15);
 
-    TEST_ESP_OK(ft_label_set_size(font_1, 200, 50));
-    // TEST_ESP_OK(ft_label_set_pos(font_1, 80, 150));
-    TEST_ESP_OK(ft_label_set_pos(font_1, 0, 0));
+    ft_label_set_text(label1->src, "Blending test");
 
-    TEST_ESP_OK(ft_label_set_text(font_1, "Blending test"));
-
-    handle = anim_player_init(&config);
-    TEST_ASSERT_NOT_NULL(handle);
-
-    anim_player_add_child(handle, 0, NULL, 0, 0, 0);
-    anim_player_add_child(handle, 1, NULL, 100, 10, 10);
-    anim_player_add_child(handle, 2, NULL, 200, 20, 20);
+    gfx_obj_t *image1 = gfx_image_create(handle);
+    gfx_obj_set_pos(image1, 50, 100);
+    // gfx_image_set_src(image1, (void *)&icon1);
+    gfx_image_set_src(image1, (void *)&icon5_new);
 
     const esp_lcd_panel_io_callbacks_t cbs = {
         .on_color_trans_done = flush_io_ready,

@@ -9,6 +9,18 @@
 #include "anim_player.h"
 #include "anim_vfs.h"
 #include "anim_dec.h"
+#include "object.h"
+
+#include "ft_blend.h"
+#include "ft_label.h"
+
+#ifndef MAX
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef MIN
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#endif
 
 static const char *TAG = "anim_player";
 
@@ -38,9 +50,9 @@ typedef struct {
 typedef struct child_t {
     int type;
     void *src;
-    size_t len;
-    uint16_t x1;
-    uint16_t y1;
+    // size_t len;
+    // uint16_t x1;
+    // uint16_t y1;
     struct child_t *next;  // Pointer to next child in the list
 } child_t;
 
@@ -57,6 +69,7 @@ typedef struct {
     TaskHandle_t handle_task;
     struct {
         unsigned char swap: 1;
+        unsigned char need_blend: 1;
     } flags;
     child_t *child_list;  // Head of the child list
 } anim_player_context_t;
@@ -69,6 +82,103 @@ typedef struct {
     int fps;
     int64_t last_frame_time;
 } anim_player_run_ctx_t;
+
+typedef struct {
+    uint32_t magic: 8;          /**< Magic number. Must be LV_IMAGE_HEADER_MAGIC*/
+    uint32_t cf : 8;            /**< Color format: See `lv_color_format_t`*/
+    uint32_t flags: 16;         /**< Image flags, see `lv_image_flags_t`*/
+
+    uint32_t w: 16;
+    uint32_t h: 16;
+    uint32_t stride: 16;        /**< Number of bytes in a row*/
+    uint32_t reserved_2: 16;    /**< Reserved to be used later*/
+} gfx_image_header_t;
+
+typedef struct {
+    gfx_image_header_t header;   /**< A header describing the basics of the image*/
+    uint32_t data_size;         /**< Size of the image in bytes*/
+    const uint8_t * data;       /**< Pointer to the data of the image*/
+    const void * reserved;      /**< A reserved field to make it has same size as lv_draw_buf_t*/
+    const void * reserved_2;    /**< A reserved field to make it has same size as lv_draw_buf_t*/
+} gfx_image_dsc_t;
+
+void anim_player_blend_child(anim_player_context_t *ctx, int x1, int y1, int x2, int y2, const void *dest_buf)
+{
+
+    child_t *current = ctx->child_list;
+    if (current != NULL) {
+        int index = 0;
+        while (current != NULL) {
+            gfx_obj_t *obj = (gfx_obj_t *)current->src;
+            // ESP_LOGI(TAG, "[%d](%p): type:[%s], src:%p, pos:(%d,%d)",
+            //          index++,
+            //          current,
+            //          current->type == CHILD_TYPE_LABEL ? "LABEL" : "IMAGE",
+            //          obj->src,
+            //          obj->x,
+            //          obj->y);
+            if (obj->type == CHILD_TYPE_LABEL) {
+                // ESP_LOGI(TAG, "label info: width:%d, height:%d, x:%d, y:%d", obj->width, obj->height, obj->x, obj->y);
+                // Calculate intersection area
+                // int clip_x1 = MAX(x1, obj->x);
+                // int clip_y1 = MAX(y1, obj->y);
+                // int clip_x2 = MIN(x2, obj->x + obj->width);
+                // int clip_y2 = MIN(y2, obj->y + obj->height);
+                
+                // if (clip_x1 < clip_x2 && clip_y1 < clip_y2) {
+                //     ESP_LOGI(TAG, "Clip: (%d,%d), (%d,%d) (width:%d, height:%d)",
+                //             clip_x1, clip_y1, clip_x2, clip_y2,
+                //             clip_x2 - clip_x1, clip_y2 - clip_y1);
+                //     // ft_sw_draw_label(obj->src, &ctx->blend_area);
+
+                //     ft_blend_area_t blend_area;
+                //     blend_area.buf_area = dest_buf;
+                //     blend_area.width = clip_x2 - clip_x1;
+                //     blend_area.height = clip_y2 - clip_y1;
+
+                //     ft_sw_draw_label(obj->src, &blend_area);
+                //     ft_label_render_mask(obj->src, &blend_area);
+
+                // }
+            } else if (obj->type == CHILD_TYPE_IMAGE) {
+                gfx_image_dsc_t *img = (gfx_image_dsc_t *)obj->src;
+                gfx_image_header_t *header = &img->header;
+                // ESP_LOGI(TAG, "header->w: %d", header->w);
+                // ESP_LOGI(TAG, "header->h: %d", header->h);
+
+                // ESP_LOGI(TAG, "flush:%03d,%03d, %03d,%03d", x1, y1, x2, y2);
+                // ESP_LOGI(TAG, "obj:%03d,%03d, %03d,%03d", obj->x, obj->y, obj->x + header->w, obj->y + header->h);
+
+                label_area_t clip_area;
+                clip_area.x1 = MAX(x1, obj->x);
+                clip_area.y1 = MAX(y1, obj->y);
+                clip_area.x2 = MIN(x2, obj->x + header->w);
+                clip_area.y2 = MIN(y2, obj->y + header->h);
+
+                // ESP_LOGW(TAG, "clip:%03d,%03d, %03d,%03d", clip_area.x1, clip_area.y1, clip_area.x2, clip_area.y2);
+
+                blend_color_t *src = (blend_color_t *)img->data + (clip_area.y1 - obj->y) * header->w;
+                label_opa_t *mask = (label_opa_t *)(img->data + header->w * header->h*2 + (clip_area.y1 - obj->y) * header->w);
+                blend_color_t *dest = (blend_color_t *)dest_buf + (clip_area.y1 - y1) * (x2 - x1) + (clip_area.x1 - x1);
+
+                // ESP_LOGI(TAG, "src:%d, dest:%d", src - (blend_color_t *)img->data, dest - (blend_color_t *)dest_buf);
+                src = (blend_color_t *)img->data + (clip_area.y1 - obj->y) * header->w;
+
+                blend_sw_img_draw(
+                    (blend_color_t *)dest,
+                    x2 - x1,
+                    src,
+                    header->w,
+                    mask,
+                    header->w,
+                    &clip_area,
+                    255
+                );
+            }
+            current = current->next;
+        }
+    }
+}
 
 static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_header_t *header, anim_player_context_t *ctx)
 {
@@ -235,6 +345,7 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
         // Flush decoded data
         xEventGroupClearBits(ctx->events.event_group, WAIT_FLUSH_DONE);
         if (ctx->flush_cb) {
+            anim_player_blend_child(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf);
             ctx->flush_cb(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf);
         }
         xEventGroupWaitBits(ctx->events.event_group, WAIT_FLUSH_DONE, pdTRUE, pdFALSE, pdMS_TO_TICKS(20));
@@ -363,24 +474,6 @@ static void anim_player_task(void *arg)
             if (ctx->update_cb) {
                 ctx->update_cb(ctx, PLAYER_EVENT_ALL_FRAME_DONE);
             }
-
-            // Print child list when animation is complete
-            // child_t *current = ctx->child_list;
-            // if (current != NULL) {
-            //     ESP_LOGW(TAG, "Child list at end of animation: %p", ctx);
-            //     int index = 0;
-            //     while (current != NULL) {
-            //         ESP_LOGI(TAG, "[%d](%p): type=%d, src(%d)=%p, pos=(%d,%d)",
-            //                 index++,
-            //                 current,
-            //                 current->type,
-            //                 current->len,
-            //                 current->src,
-            //                 current->x1,
-            //                 current->y1);
-            //         current = current->next;
-            //     }
-            // }
         } while (run_ctx.repeat);
 
         run_ctx.action = PLAYER_ACTION_STOP;
@@ -533,6 +626,7 @@ anim_player_handle_t anim_player_init(const anim_player_config_t *config)
     player->update_cb = config->update_cb;
     player->user_data = config->user_data;
     player->flags.swap = config->flags.swap;
+    player->flags.need_blend = config->flags.need_blend;
     player->events.event_group = xEventGroupCreate();
     player->events.event_queue = xQueueCreate(5, sizeof(anim_player_event_t));
     player->child_list = NULL;
@@ -592,7 +686,7 @@ void anim_player_deinit(anim_player_handle_t handle)
     free(ctx);
 }
 
-esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src, size_t len, uint16_t x1, uint16_t y1)
+esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src)
 {
     anim_player_context_t *ctx = (anim_player_context_t *)handle;
     if (ctx == NULL) {
@@ -610,9 +704,6 @@ esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src
     // Initialize child node
     new_child->type = type;
     new_child->src = src;
-    new_child->len = len;
-    new_child->x1 = x1;
-    new_child->y1 = y1;
     new_child->next = NULL;
 
     // Add to the end of the list
@@ -626,6 +717,6 @@ esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src
         current->next = new_child;
     }
 
-    ESP_LOGI(TAG, "Added child(%p): type=%d, src(%d)=%p, x=%d, y=%d", new_child, new_child->type, new_child->len, new_child->src, new_child->x1, new_child->y1);
+    ESP_LOGI(TAG, "Added child(%p): type=%d, src=%p", new_child, new_child->type, new_child->src);
     return ESP_OK;
 }

@@ -172,8 +172,6 @@ void blend_sw_img_draw(blend_color_t *dest_buf, label_coord_t dest_stride,
                     }
                     last_dest_color.full = dest_buf[x].full;
                     last_src_color.full = src_buf[x].full;
-                } else {
-                    // ESP_LOGI("blend", "1:%d, 2:%d, 3:%d", *mask != last_mask, last_dest_color.full != dest_buf[x].full, last_src_color.full != src_buf[x].full);
                 }
                 dest_buf[x] = last_res_color;
             }

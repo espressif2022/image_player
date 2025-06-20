@@ -43,7 +43,6 @@ typedef struct {
 
     struct {
         unsigned char swap:1;
-        unsigned char need_blend:1;
     } flags;
     struct {
         int task_priority;      ///< Task priority (1-20)

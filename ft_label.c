@@ -326,11 +326,9 @@ esp_err_t ft_label_set_size(ft_font_handle_t handle, int16_t w, int16_t h)
     return ESP_OK;
 }
 
-esp_err_t ft_sw_draw_label(ft_font_handle_t handle, ft_blend_area_t *blend_area)
+esp_err_t ft_sw_draw_label(ft_font_handle_t handle)
 {
     ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
-    ESP_RETURN_ON_FALSE(blend_area, ESP_ERR_INVALID_ARG, TAG, "invalid blend_area");
-    ESP_RETURN_ON_FALSE(blend_area->buf_area, ESP_ERR_INVALID_ARG, TAG, "invalid blend_area->buf_area");
 
     esp_err_t ret = ESP_OK;
     FT_Error error;
@@ -338,16 +336,8 @@ esp_err_t ft_sw_draw_label(ft_font_handle_t handle, ft_blend_area_t *blend_area)
     ft_label_property_t *font_info = (ft_label_property_t *)handle;
     ESP_RETURN_ON_FALSE(font_info->text, ESP_ERR_INVALID_ARG, TAG, "Text is NULL");
 
-    int buf_area_w = blend_area->width;
-    int buf_area_h = blend_area->height;
-    blend_color_t *dest = (blend_color_t *)blend_area->buf_area;
-
-    label_coord_t mask_stride = font_info->width;
-    label_coord_t dest_stride = buf_area_w;
-
-
-    if(font_info->mask) {
-        ESP_LOGI(TAG, "mask already rendered");
+    if (font_info->mask) {
+        // ESP_LOGI(TAG, "mask already rendered");
         return ESP_OK;
     }
 
@@ -360,21 +350,12 @@ esp_err_t ft_sw_draw_label(ft_font_handle_t handle, ft_blend_area_t *blend_area)
     error = FT_Set_Pixel_Sizes(face, 0, font_info->font_size);
     ESP_GOTO_ON_FALSE(!error, ESP_ERR_INVALID_STATE, err, TAG, "error setting font size");
 
-    label_area_t clip_area;
-    clip_area.x1 = font_info->x >= 0 ? 0 : (0 - font_info->x);
-    clip_area.x2 = font_info->x + font_info->width <= buf_area_w ? font_info->width : (buf_area_w - font_info->x);
-    clip_area.y1 = font_info->y >= 0 ? 0 : (0 - font_info->y);
-    clip_area.y2 = font_info->y + font_info->height <= buf_area_h ? font_info->height : (buf_area_h - font_info->y);
-
-    ESP_LOGI(TAG, "clip:col:%d->%d in [%d], row:%d->%d in [%d], position:[%d,%d]",
-             clip_area.x1, clip_area.x2, font_info->width,
-             clip_area.y1, clip_area.y2, font_info->height,
-             font_info->x, font_info->y);
-
     int x = 0;
     int y = 0;
 
     const char *p = font_info->text;
+
+    ESP_LOGI(TAG, "text:%s, width:%d, height:%d", font_info->text, font_info->width, font_info->height);
 
     while (*p) {
         FT_UInt glyph_index;
@@ -404,14 +385,19 @@ esp_err_t ft_sw_draw_label(ft_font_handle_t handle, ft_blend_area_t *blend_area)
             glyph_index = 0;
         }
         p += bytes_in_char;
+        ESP_LOGI(TAG, "glyph_index:%d", glyph_index);
 
         /* load glyph image into the slot (erase previous one) */
         error = FT_Load_Glyph(face, glyph_index, FT_LOAD_DEFAULT);
         ESP_GOTO_ON_FALSE(!error, ESP_ERR_NOT_FOUND, err, TAG, "error loading glyph");
 
+        ESP_LOGI(TAG, "FT_Render_Glyph face->glyph:%p", face->glyph);
+
         /* convert to a bitmap */
         error = FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL);
         ESP_GOTO_ON_FALSE(!error, ESP_ERR_INVALID_STATE, err, TAG, "error rendering glyph");
+
+        ESP_LOGI(TAG, "FT_Render_Glyph end");
 
         /* copy the glyph bitmap into the overall bitmap */
         FT_GlyphSlot slot = face->glyph;
@@ -422,12 +408,13 @@ esp_err_t ft_sw_draw_label(ft_font_handle_t handle, ft_blend_area_t *blend_area)
         int ofs_x = slot->bitmap_left;
         int ofs_y = line_height - base_line - slot->bitmap_top;
 
+        ESP_LOGI(TAG, "ofs_x:%d, ofs_y:%d, slot->bitmap.rows:%d, slot->bitmap.width:%d", ofs_x, ofs_y, slot->bitmap.rows, slot->bitmap.width);
+
         for (int32_t iy = 0; iy < slot->bitmap.rows; iy++) {
             for (int32_t ix = 0; ix < slot->bitmap.width; ix++) {
                 int32_t res_x = ix + x + ofs_x;
                 int32_t res_y = iy + y + ofs_y;
-                if (res_x > clip_area.x2 || res_x < clip_area.x1 ||
-                        res_y > clip_area.y2 || res_y < clip_area.y1) {
+                if (res_x >= font_info->width || res_y >= font_info->height) {
                     continue;
                 }
                 uint8_t value = slot->bitmap.buffer[ix + iy * slot->bitmap.width];
@@ -437,13 +424,31 @@ esp_err_t ft_sw_draw_label(ft_font_handle_t handle, ft_blend_area_t *blend_area)
 
         /* increment horizontal position */
         x += slot->advance.x >> 6;
-        if (x >= (clip_area.x2 - clip_area.x1)) {
+        // if (x >= (clip_area->x2 - clip_area->x1)) {
+        if (x >= font_info->width) {
             break;
         }
     }
 
     ESP_LOGI(TAG, "mask: %p", mask);
     font_info->mask = mask;
+
+    /* output the resulting bitmap to console */
+    for (int iy = 0; iy < font_info->height; iy++) {
+        for (int ix = 0; ix < font_info->width; ix++) {
+            int val = mask_buf[iy * font_info->width + ix];
+            if (val > 127) {
+                putchar('#');
+            } else if (val > 64) {
+                putchar('+');
+            } else if (val > 32) {
+                putchar('.');
+            } else {
+                putchar(' ');
+            }
+        }
+        putchar('\n');
+    }
 
     // dest += dest_stride * (font_info->y > 0 ? font_info->y : 0) + (font_info->x > 0 ? font_info->x : 0);
     // mask += mask_stride * (clip_area.y1 > 0 ? clip_area.y1 : 0) + (clip_area.x1 > 0 ? clip_area.x1 : 0);
@@ -457,35 +462,19 @@ err:
     return ret;
 }
 
-esp_err_t ft_label_render_mask(ft_font_handle_t handle, ft_blend_area_t *blend_area)
+esp_err_t ft_label_render_mask(ft_font_handle_t handle, blend_color_t *dest, label_coord_t dest_stride, label_coord_t mask_height, label_area_t *clip_area)
 {
     ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
-    ESP_RETURN_ON_FALSE(blend_area, ESP_ERR_INVALID_ARG, TAG, "invalid blend_area");
-    ESP_RETURN_ON_FALSE(blend_area->buf_area, ESP_ERR_INVALID_ARG, TAG, "invalid blend_area->buf_area");
 
     ft_label_property_t *font_info = (ft_label_property_t *)handle;
     ESP_RETURN_ON_FALSE(font_info->text, ESP_ERR_INVALID_ARG, TAG, "Text is NULL");
 
-    int buf_area_w = blend_area->width;
-    int buf_area_h = blend_area->height;
-    blend_color_t *dest = (blend_color_t *)blend_area->buf_area;
-
-    label_coord_t mask_stride = font_info->width;
-    label_coord_t dest_stride = buf_area_w;
-
-    label_area_t clip_area;
-    clip_area.x1 = font_info->x >= 0 ? 0 : (0 - font_info->x);
-    clip_area.x2 = font_info->x + font_info->width <= buf_area_w ? font_info->width : (buf_area_w - font_info->x);
-    clip_area.y1 = font_info->y >= 0 ? 0 : (0 - font_info->y);
-    clip_area.y2 = font_info->y + font_info->height <= buf_area_h ? font_info->height : (buf_area_h - font_info->y);
-
-
     label_opa_t *mask = font_info->mask;
 
-    dest += dest_stride * (font_info->y > 0 ? font_info->y : 0) + (font_info->x > 0 ? font_info->x : 0);
-    mask += mask_stride * (clip_area.y1 > 0 ? clip_area.y1 : 0) + (clip_area.x1 > 0 ? clip_area.x1 : 0);
+    label_coord_t mask_stride = font_info->width;
+    mask += mask_height * mask_stride;
 
-    blend_sw_draw(dest, dest_stride, font_info->color, font_info->opa, mask, &clip_area, mask_stride);
+    blend_sw_draw(dest, dest_stride, font_info->color, font_info->opa, mask, clip_area, mask_stride);
 
     return ESP_OK;
 }

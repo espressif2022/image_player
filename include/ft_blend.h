@@ -13,16 +13,6 @@ extern "C" {
 #endif
 
 /**
- * @brief Structure representing a rectangular area with coordinates.
- */
-typedef struct {
-    label_coord_t x1; /*!< X coordinate of the top-left corner */
-    label_coord_t y1; /*!< Y coordinate of the top-left corner */
-    label_coord_t x2; /*!< X coordinate of the bottom-right corner */
-    label_coord_t y2; /*!< Y coordinate of the bottom-right corner */
-} label_area_t;
-
-/**
  * @brief Union representing a color with different bit-field layouts.
  */
 typedef union {
@@ -56,6 +46,10 @@ void blend_sw_img_draw(blend_color_t *dest_buf, label_coord_t dest_stride,
                       const blend_color_t *src_buf, label_coord_t src_stride,
                       const label_opa_t *mask, label_coord_t mask_stride,
                       label_area_t *clip_area, label_opa_t opa);
+
+
+esp_err_t ft_label_render_mask(ft_font_handle_t handle, blend_color_t *dest, 
+label_coord_t dest_stride, label_coord_t mask_offset, label_area_t *clip_area);
 
 #ifdef __cplusplus
 }

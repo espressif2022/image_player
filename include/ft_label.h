@@ -17,6 +17,17 @@ typedef uint8_t     label_opa_t;   /*!< Type for label opacity, range from 0 (fu
 typedef int16_t     label_coord_t; /*!< Type for label coordinates, supports negative values for positioning */
 typedef uint32_t    label_color_t; /*!< Type for label color, typically in 0xRRGGBB format */
 
+
+/**
+ * @brief Structure representing a rectangular area with coordinates.
+ */
+typedef struct {
+    label_coord_t x1; /*!< X coordinate of the top-left corner */
+    label_coord_t y1; /*!< Y coordinate of the top-left corner */
+    label_coord_t x2; /*!< X coordinate of the bottom-right corner */
+    label_coord_t y2; /*!< Y coordinate of the bottom-right corner */
+} label_area_t;
+
 /**
  * @brief Macro to cast a color value to label_color_t type
  */
@@ -250,9 +261,7 @@ esp_err_t ft_label_set_text_fmt(ft_font_handle_t handle, const char * fmt, ...);
  *      - ESP_OK: Success
  *      - Other error codes
  */
-esp_err_t ft_sw_draw_label(ft_font_handle_t handle, ft_blend_area_t *blend_cfg);
-
-esp_err_t ft_label_render_mask(ft_font_handle_t handle, ft_blend_area_t *blend_area);
+esp_err_t ft_sw_draw_label(ft_font_handle_t handle);
 
 void ft_label_print_info(void *src);
 

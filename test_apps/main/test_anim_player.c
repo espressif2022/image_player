@@ -32,9 +32,7 @@ static anim_player_handle_t handle = NULL;
 static esp_lcd_panel_io_handle_t io_handle = NULL;
 static esp_lcd_panel_handle_t panel_handle = NULL;
 
-uint16_t *frame_buffer = NULL;
 ft_font_handle_t obj_label;
-ft_blend_area_t blend_area;
 
 void setUp(void)
 {
@@ -63,21 +61,21 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
     // if(y1 == 0) {
     //     ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
     // }
-    // esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
-    // anim_player_flush_ready(handle);
-    // return;
-    if (y1 > 320) {
-        anim_player_flush_ready(handle);
-        return;
-    }
+    esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
+    // // anim_player_flush_ready(handle);
+    // // return;
+    // if (y1 > 320) {
+    //     anim_player_flush_ready(handle);
+    //     return;
+    // }
 
-    int end_y = y2;
-    if (y2 > 320) {
-        anim_player_flush_ready(handle);
-        end_y = 320;
-    }
-    // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, end_y);
-    memcpy(frame_buffer + y1 * 240 + x1, data, (x2 - x1) * (end_y - y1) * sizeof(uint16_t));
+    // int end_y = y2;
+    // if (y2 > 320) {
+    //     anim_player_flush_ready(handle);
+    //     end_y = 320;
+    // }
+    // // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, end_y);
+    // memcpy(frame_buffer + y1 * 240 + x1, data, (x2 - x1) * (end_y - y1) * sizeof(uint16_t));
     anim_player_flush_ready(handle);
 }
 
@@ -190,7 +188,7 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
         ESP_LOGI(TAG, "Event: IDLE");
         break;
     case PLAYER_EVENT_ONE_FRAME_DONE:
-        // ESP_LOGI(TAG, "Event: ONE_FRAME_DONE");
+        ESP_LOGI(TAG, "Event: ONE_FRAME_DONE");
         if (start_time == 0) {
             start_time = esp_timer_get_time();
         }
@@ -211,7 +209,7 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
         // blend_sw_img_draw_example(&blend_area);
 
         /* draw */
-        esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, blend_area.buf_area);
+        // esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, blend_area.buf_area);
         total_frames++;
         break;
     case PLAYER_EVENT_ALL_FRAME_DONE:
@@ -261,7 +259,6 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         .user_data = panel_handle,
         .flags = {
             .swap = true,
-            .need_blend = true,
         },
         .task = ANIM_PLAYER_INIT_CONFIG()
     };
@@ -269,13 +266,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     config.task.task_stack_caps = MALLOC_CAP_DEFAULT;
     config.task.task_affinity = 1;
     config.task.task_priority = 7;
-
-    frame_buffer = (uint16_t *)heap_caps_malloc(240 * 320 * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-    assert(frame_buffer != NULL);
-
-    blend_area.width = 240;
-    blend_area.height = 320;
-    blend_area.buf_area = (uint8_t *)frame_buffer;
+    config.task.task_stack = 20*1024;
 
     mmap_assets_handle_t assets_font = NULL;
     const mmap_assets_config_t asset_config_font = {
@@ -318,17 +309,16 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     font_config.mem_size = mmap_assets_get_size(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
 
     gfx_obj_t *label1 = gfx_label_create(&font_config, handle);
-    gfx_obj_set_pos(label1, 100, 100);
+    gfx_obj_set_pos(label1, 10, 170);
     gfx_obj_set_size(label1, 200, 50);
 
     ft_label_set_color(label1->src, FT_COLOR_HEX(0xFF0000));
     ft_label_set_opa(label1->src, 0xFF);
-    ft_label_set_font_size(label1->src, 15);
-
-    ft_label_set_text(label1->src, "Blending test");
+    ft_label_set_font_size(label1->src, 20);
+    ft_label_set_text(label1->src, "1234567890");
 
     gfx_obj_t *image1 = gfx_image_create(handle);
-    gfx_obj_set_pos(image1, 50, 100);
+    gfx_obj_set_pos(image1, 20, 100);
     // gfx_image_set_src(image1, (void *)&icon1);
     gfx_image_set_src(image1, (void *)&icon5_new);
 

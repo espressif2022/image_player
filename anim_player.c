@@ -67,9 +67,11 @@ typedef struct {
     void *user_data;
     anim_player_events_t events;
     TaskHandle_t handle_task;
+
+    uint16_t screen_w;
+    uint16_t screen_h;
     struct {
         unsigned char swap: 1;
-        unsigned char need_blend: 1;
     } flags;
     child_t *child_list;  // Head of the child list
 } anim_player_context_t;
@@ -110,36 +112,38 @@ void anim_player_blend_child(anim_player_context_t *ctx, int x1, int y1, int x2,
         int index = 0;
         while (current != NULL) {
             gfx_obj_t *obj = (gfx_obj_t *)current->src;
-            // ESP_LOGI(TAG, "[%d](%p): type:[%s], src:%p, pos:(%d,%d)",
-            //          index++,
-            //          current,
-            //          current->type == CHILD_TYPE_LABEL ? "LABEL" : "IMAGE",
-            //          obj->src,
-            //          obj->x,
-            //          obj->y);
             if (obj->type == CHILD_TYPE_LABEL) {
-                // ESP_LOGI(TAG, "label info: width:%d, height:%d, x:%d, y:%d", obj->width, obj->height, obj->x, obj->y);
-                // Calculate intersection area
-                // int clip_x1 = MAX(x1, obj->x);
-                // int clip_y1 = MAX(y1, obj->y);
-                // int clip_x2 = MIN(x2, obj->x + obj->width);
-                // int clip_y2 = MIN(y2, obj->y + obj->height);
-                
-                // if (clip_x1 < clip_x2 && clip_y1 < clip_y2) {
-                //     ESP_LOGI(TAG, "Clip: (%d,%d), (%d,%d) (width:%d, height:%d)",
-                //             clip_x1, clip_y1, clip_x2, clip_y2,
-                //             clip_x2 - clip_x1, clip_y2 - clip_y1);
-                //     // ft_sw_draw_label(obj->src, &ctx->blend_area);
+                // ESP_LOGW(TAG, "out:%03d,%03d, %03d,%03d", x1, y1, x2, y2);
+                // ESP_LOGI(TAG, "obj:%03d,%03d, %03d,%03d", obj->x, obj->y, (obj->x + obj->width), (obj->y + obj->height));
 
-                //     ft_blend_area_t blend_area;
-                //     blend_area.buf_area = dest_buf;
-                //     blend_area.width = clip_x2 - clip_x1;
-                //     blend_area.height = clip_y2 - clip_y1;
+                label_area_t clip_area;
+                clip_area.x1 = MAX(x1, obj->x);
+                clip_area.y1 = MAX(y1, obj->y);
+                clip_area.x2 = MIN(x2, obj->x + obj->width);
+                clip_area.y2 = MIN(y2, obj->y + obj->height);
 
-                //     ft_sw_draw_label(obj->src, &blend_area);
-                //     ft_label_render_mask(obj->src, &blend_area);
+                if (clip_area.x1 < clip_area.x2 && clip_area.y1 < clip_area.y2) {
+                    // ESP_LOGE(TAG, "clip:%03d,%03d, %03d,%03d", clip_area.x1, clip_area.y1, clip_area.x2, clip_area.y2);
+                } else {
+                    // ESP_LOGW(TAG, "no clip");
+                    current = current->next;
+                    continue;
+                }
 
-                // }
+                ft_sw_draw_label(obj->src); //no use now
+
+                blend_color_t *dest = (blend_color_t *)dest_buf + (clip_area.y1 - y1) * (x2 - x1) + (clip_area.x1);
+
+                label_coord_t dest_stride = (x2 - x1);
+                label_coord_t mask_height = (clip_area.y1 - obj->y);
+                label_coord_t mask_stride = obj->width;
+
+                // ESP_LOGI(TAG, "mask_stride:%d", mask_stride);
+                // ESP_LOGI(TAG, "dest_stride:%d", dest_stride);
+                // ESP_LOGI(TAG, "mask_height:%d", mask_height);
+
+                ft_label_render_mask(obj->src, dest, dest_stride, mask_height, &clip_area);
+
             } else if (obj->type == CHILD_TYPE_IMAGE) {
                 gfx_image_dsc_t *img = (gfx_image_dsc_t *)obj->src;
                 gfx_image_header_t *header = &img->header;
@@ -155,14 +159,26 @@ void anim_player_blend_child(anim_player_context_t *ctx, int x1, int y1, int x2,
                 clip_area.x2 = MIN(x2, obj->x + header->w);
                 clip_area.y2 = MIN(y2, obj->y + header->h);
 
+                if (clip_area.x1 < clip_area.x2 && clip_area.y1 < clip_area.y2) {
+                    // ESP_LOGW(TAG, "clip:%03d,%03d, %03d,%03d", clip_area.x1, clip_area.y1, clip_area.x2, clip_area.y2);
+                } else {
+                    // ESP_LOGW(TAG, "no clip");
+                    current = current->next;
+                    continue;
+                }
+
                 // ESP_LOGW(TAG, "clip:%03d,%03d, %03d,%03d", clip_area.x1, clip_area.y1, clip_area.x2, clip_area.y2);
 
                 blend_color_t *src = (blend_color_t *)img->data + (clip_area.y1 - obj->y) * header->w;
-                label_opa_t *mask = (label_opa_t *)(img->data + header->w * header->h*2 + (clip_area.y1 - obj->y) * header->w);
-                blend_color_t *dest = (blend_color_t *)dest_buf + (clip_area.y1 - y1) * (x2 - x1) + (clip_area.x1 - x1);
+                label_opa_t *mask = (label_opa_t *)(img->data + header->w * header->h * 2 + (clip_area.y1 - obj->y) * header->w);
 
-                // ESP_LOGI(TAG, "src:%d, dest:%d", src - (blend_color_t *)img->data, dest - (blend_color_t *)dest_buf);
+                blend_color_t *dest = (blend_color_t *)dest_buf + (clip_area.y1 - y1) * (x2 - x1) + (clip_area.x1 - x1);
                 src = (blend_color_t *)img->data + (clip_area.y1 - obj->y) * header->w;
+
+                // ESP_LOGI(TAG, "src:%p, mask:%p, dest:%p", src, mask, dest);
+                // ESP_LOGI(TAG, "dest:%p, stride:%d", dest, x2 - x1);
+                // ESP_LOGI(TAG, "src:%p, mask:%p, stride:%d, offset:%d", src, mask, header->w, (int)((char *)mask - (char *)src));
+                // printf("\r\n");
 
                 blend_sw_img_draw(
                     (blend_color_t *)dest,
@@ -458,6 +474,9 @@ static void anim_player_task(void *arg)
 
                 image_format_t format = anim_dec_parse_header(frame_data, frame_size, &header);
 
+                ctx->screen_w = header.width;
+                ctx->screen_h = header.height;
+
                 if (format == IMAGE_FORMAT_INVALID) {
                     ESP_LOGE(TAG, "Invalid frame format");
                     continue;
@@ -626,7 +645,6 @@ anim_player_handle_t anim_player_init(const anim_player_config_t *config)
     player->update_cb = config->update_cb;
     player->user_data = config->user_data;
     player->flags.swap = config->flags.swap;
-    player->flags.need_blend = config->flags.need_blend;
     player->events.event_group = xEventGroupCreate();
     player->events.event_queue = xQueueCreate(5, sizeof(anim_player_event_t));
     player->child_list = NULL;

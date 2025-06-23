@@ -20,9 +20,8 @@
 #include "mmap_generate_test_8bit.h"
 #include "mmap_generate_spiffs_assets.h"
 
-#include "gfx_object.h"
-#include "gfx_draw_label.h"
-#include "gfx_draw_img.h"
+#include "gfx_types.h"
+#include "gfx_obj.h"
 
 static const char *TAG = "player";
 
@@ -162,27 +161,24 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
 
     handle = anim_player_init(&config);
 
-    gfx_font_init();
-
-    gfx_lable_cfg_t font_config;
+    gfx_label_cfg_t font_config;
 
     font_config.name = "DejaVuSans.ttf";
     font_config.mem = mmap_assets_get_mem(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
     font_config.mem_size = mmap_assets_get_size(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
 
-    gfx_obj_t *label1 = gfx_label_create(&font_config, handle);
+    gfx_obj_t *label1 = gfx_label_create(handle, &font_config);
     gfx_obj_set_pos(label1, 10, 170);
     gfx_obj_set_size(label1, 200, 50);
 
-    gfx_lable_set_color(label1->src, GFX_COLOR_HEX(0xFF0000));
-    gfx_lable_set_opa(label1->src, 0xFF);
-    gfx_lable_set_font_size(label1->src, 20);
-    gfx_lable_set_text(label1->src, "1234567890");
+    gfx_label_set_color(label1, GFX_COLOR_HEX(0xFF0000));
+    gfx_label_set_opa(label1, 0xFF);
+    gfx_label_set_font_size(label1, 20);
+    gfx_label_set_text(label1, "ABCD");
 
-    gfx_obj_t *image1 = gfx_image_create(handle);
+    gfx_obj_t *image1 = gfx_img_create(handle);
     gfx_obj_set_pos(image1, 20, 100);
-    // gfx_image_set_src(image1, (void *)&icon1);
-    gfx_image_set_src(image1, (void *)&icon5_new);
+    gfx_img_set_src(image1, (void *)&icon5_new);
 
     const esp_lcd_panel_io_callbacks_t cbs = {
         .on_color_trans_done = flush_io_ready,
@@ -203,7 +199,8 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         ESP_LOGW(TAG, "set src, %s", mmap_assets_get_name(assets_handle, i));
         anim_player_set_src_data(handle, src_data, src_len);
         anim_player_get_segment(handle, &start, &end);
-        anim_player_set_segment(handle, start, end, 50, true);
+        // anim_player_set_segment(handle, start, end, 50, true);
+        anim_player_set_segment(handle, start, end, 5, true);
         ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
 
         anim_player_update(handle, PLAYER_ACTION_START);

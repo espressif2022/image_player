@@ -11,38 +11,19 @@
 #include "esp_check.h"
 
 #include "ft2build.h"
-#include "ft_blend.h"
+#include "gfx_font_internal.h"
+#include "anim_player.h"
+#include "gfx_types.h"
+#include "gfx_obj.h"
+#include "gfx_draw.h"
+#include "gfx_comm.h"
+#include "gfx_sw_blend.h"
 
 #include FT_FREETYPE_H
 
 static const char *TAG = "FT_label";
 
-typedef struct {
-    FT_Face face;           /*!< FreeType font face object */
-    uint16_t font_size;     /*!< Size of the font in points */
-    label_opa_t opa;        /*!< Opacity of the label */
-    blend_color_t color;    /*!< Color of the label */
-
-    char *text;             /*!< Text content of the label */
-    label_coord_t x;        /*!< X coordinate of the label's position */
-    label_coord_t y;        /*!< Y coordinate of the label's position */
-    uint16_t width;         /*!< Width of the label */
-    uint16_t height;        /*!< Height of the label */
-    uint8_t *mask;
-} ft_label_property_t;
-
-typedef struct face_entry {
-    FT_Face face;
-    const void *mem;
-    SLIST_ENTRY(face_entry) entries;
-} ft_face_entry_t;
-
-typedef struct {
-    SLIST_HEAD(face_list, face_entry) ft_face_head;
-    FT_Library ft_library;
-} ft_library_t;
-
-static const ft_label_property_t ft_property_default = {
+static const gfx_label_property_t ft_property_default = {
     .face = NULL,
     .font_size = 20,
     .opa = 0xFF,
@@ -56,7 +37,7 @@ static const ft_label_property_t ft_property_default = {
     .height = 50
 };
 
-esp_err_t ft_library_create(ft_lib_handle_t *ret_lib)
+esp_err_t gfx_ft_lib_create(ft_lib_handle_t *ret_lib)
 {
     ESP_RETURN_ON_FALSE(ret_lib, ESP_ERR_INVALID_ARG, TAG, "invalid arguments");
 
@@ -65,9 +46,11 @@ esp_err_t ft_library_create(ft_lib_handle_t *ret_lib)
 
     ft_library_t *lib = (ft_library_t *)calloc(1, sizeof(ft_library_t));
     ESP_RETURN_ON_FALSE(lib, ESP_ERR_NO_MEM, TAG, "no mem for FT library");
-    SLIST_INIT(&lib->ft_face_head);
+    
+    // Initialize the linked list manually since we removed SLIST macros
+    lib->ft_face_head = NULL;
 
-    error = FT_Init_FreeType(&lib->ft_library);
+    error = FT_Init_FreeType((FT_Library *)&lib->ft_library);
     ESP_GOTO_ON_FALSE(!error, ESP_ERR_INVALID_STATE, err, TAG, "error initializing FT library");
     *ret_lib = lib;
 
@@ -83,42 +66,52 @@ err:
     return ret;
 }
 
-esp_err_t ft_library_cleanup(ft_lib_handle_t lib_handle)
+esp_err_t gfx_ft_lib_cleanup(ft_lib_handle_t lib_handle)
 {
     ESP_RETURN_ON_FALSE(lib_handle, ESP_ERR_INVALID_ARG, TAG, "invalid library");
 
     ft_library_t *lib = (ft_library_t *)lib_handle;
-    while (!SLIST_EMPTY(&lib->ft_face_head)) {
-        ft_face_entry_t *entry = SLIST_FIRST(&lib->ft_face_head);
-        SLIST_REMOVE_HEAD(&lib->ft_face_head, entries);
-        FT_Done_Face(entry->face);
+    
+    // Clean up the linked list manually
+    ft_face_entry_t *entry = lib->ft_face_head;
+    while (entry != NULL) {
+        ft_face_entry_t *next = entry->next;
+        FT_Done_Face((FT_Face)entry->face);
         free(entry);
+        entry = next;
     }
-    FT_Done_FreeType(lib->ft_library);
+    
+    FT_Done_FreeType((FT_Library)lib->ft_library);
     free(lib);
 
     return ESP_OK;
 }
 
-esp_err_t ft_label_new_font(ft_lib_handle_t lib_handle, const ft_label_cfg_t *cfg, ft_font_handle_t *ret_handle)
+extern ft_lib_handle_t anim_player_get_font_lib(anim_player_handle_t handle);
+
+esp_err_t gfx_label_new_font(anim_player_handle_t handle, const gfx_label_cfg_t *cfg, ft_font_handle_t *ret_handle)
 {
-    ESP_RETURN_ON_FALSE(lib_handle && cfg && ret_handle, ESP_ERR_INVALID_ARG, TAG, "invalid arguments");
+    ESP_RETURN_ON_FALSE(handle && cfg && ret_handle, ESP_ERR_INVALID_ARG, TAG, "invalid arguments");
     ESP_RETURN_ON_FALSE(cfg->mem && cfg->mem_size, ESP_ERR_INVALID_ARG, TAG, "invalid memory input");
 
     FT_Face face = NULL;
     FT_Error error;
 
-    ft_library_t *lib = (ft_library_t *)lib_handle;
+    ft_library_t *lib = anim_player_get_font_lib(handle);
     ft_face_entry_t *entry;
-    SLIST_FOREACH(entry, &lib->ft_face_head, entries) {
+    
+    // Search for existing font
+    entry = lib->ft_face_head;
+    while (entry != NULL) {
         if (entry->mem == cfg->mem) {
-            face = entry->face;
+            face = (FT_Face)entry->face;
             break;
         }
+        entry = entry->next;
     }
 
     if (!face) {
-        error = FT_New_Memory_Face(lib->ft_library, cfg->mem, cfg->mem_size, 0, &face);
+        error = FT_New_Memory_Face((FT_Library)lib->ft_library, cfg->mem, cfg->mem_size, 0, &face);
         ESP_RETURN_ON_FALSE(!error, ESP_ERR_INVALID_ARG, TAG, "error loading font");
 
         ft_face_entry_t *new_face_entry = (ft_face_entry_t *)calloc(1, sizeof(ft_face_entry_t));
@@ -126,13 +119,14 @@ esp_err_t ft_label_new_font(ft_lib_handle_t lib_handle, const ft_label_cfg_t *cf
 
         new_face_entry->face = face;
         new_face_entry->mem = cfg->mem;
-        SLIST_INSERT_HEAD(&lib->ft_face_head, new_face_entry, entries);
+        new_face_entry->next = lib->ft_face_head;
+        lib->ft_face_head = new_face_entry;
     }
 
-    ft_label_property_t *ft_info = (ft_label_property_t *)calloc(1, sizeof(ft_label_property_t));
+    gfx_label_property_t *ft_info = (gfx_label_property_t *)calloc(1, sizeof(gfx_label_property_t));
     ESP_RETURN_ON_FALSE(ft_info, ESP_ERR_NO_MEM, TAG, "no mem for ft_info");
 
-    memcpy(ft_info, &ft_property_default, sizeof(ft_label_property_t));
+    memcpy(ft_info, &ft_property_default, sizeof(gfx_label_property_t));
     ft_info->face = face;
 
     ESP_LOGI(TAG, "new font(%s):@%p", cfg->name, ft_info);
@@ -141,11 +135,11 @@ esp_err_t ft_label_new_font(ft_lib_handle_t lib_handle, const ft_label_cfg_t *cf
     return ESP_OK;
 }
 
-esp_err_t ft_label_del_font(ft_font_handle_t handle)
+esp_err_t gfx_label_del_font(gfx_obj_t * obj)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     if (font_info->text) {
         free(font_info->text);
     }
@@ -156,11 +150,11 @@ esp_err_t ft_label_del_font(ft_font_handle_t handle)
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_text(ft_font_handle_t handle, const char *text)
+esp_err_t gfx_label_set_text(gfx_obj_t * obj, const char *text)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
 
     if (text == NULL) {
         text = font_info->text;
@@ -191,11 +185,11 @@ esp_err_t ft_label_set_text(ft_font_handle_t handle, const char *text)
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_text_fmt(ft_font_handle_t handle, const char * fmt, ...)
+esp_err_t gfx_label_set_text_fmt(gfx_obj_t * obj, const char * fmt, ...)
 {
-    ESP_RETURN_ON_FALSE(handle && fmt, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj && fmt, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
 
     if (font_info->text != NULL) {
         free(font_info->text);
@@ -224,67 +218,67 @@ esp_err_t ft_label_set_text_fmt(ft_font_handle_t handle, const char * fmt, ...)
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_font_size(ft_font_handle_t handle, uint8_t font_size)
+esp_err_t gfx_label_set_font_size(gfx_obj_t * obj, uint8_t font_size)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
     ESP_RETURN_ON_FALSE(font_size > 0, ESP_ERR_INVALID_ARG, TAG, "invalid font size");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     font_info->font_size = font_size;
     ESP_LOGD(TAG, "set font size: %d", font_info->font_size);
 
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_opa(ft_font_handle_t handle, label_opa_t opa)
+esp_err_t gfx_label_set_opa(gfx_obj_t * obj, gfx_opa_t opa)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     font_info->opa = opa;
     ESP_LOGD(TAG, "set font opa: %d", font_info->opa);
 
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_color(ft_font_handle_t handle, label_color_t color)
+esp_err_t gfx_label_set_color(gfx_obj_t * obj, gfx_color_t color)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
-    font_info->color = blend_color_hex(color);
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
+    font_info->color = color;
     ESP_LOGD(TAG, "set font color: %02x", font_info->color.full);
 
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_x(ft_font_handle_t handle, label_coord_t x)
+esp_err_t gfx_label_set_x(gfx_obj_t * obj, gfx_coord_t x)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     font_info->x = x;
     ESP_LOGD(TAG, "set font x: %d", font_info->x);
 
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_y(ft_font_handle_t handle, label_coord_t y)
+esp_err_t gfx_label_set_y(gfx_obj_t * obj, gfx_coord_t y)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     font_info->y = y;
     ESP_LOGD(TAG, "set font y: %d", font_info->y);
 
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_pos(ft_font_handle_t handle, label_coord_t x, label_coord_t y)
+esp_err_t gfx_label_set_pos(gfx_obj_t * obj, gfx_coord_t x, gfx_coord_t y)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     font_info->x = x;
     font_info->y = y;
     ESP_LOGD(TAG, "set font pos: %d, %d", x, y);
@@ -292,33 +286,33 @@ esp_err_t ft_label_set_pos(ft_font_handle_t handle, label_coord_t x, label_coord
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_width(ft_font_handle_t handle, int16_t w)
+esp_err_t gfx_label_set_width(gfx_obj_t * obj, int16_t w)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     font_info->width = w;
     ESP_LOGD(TAG, "set font width: %d", font_info->width);
 
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_height(ft_font_handle_t handle, int16_t h)
+esp_err_t gfx_label_set_height(gfx_obj_t * obj, int16_t h)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     font_info->height = h;
     ESP_LOGD(TAG, "set font height: %d", font_info->height);
 
     return ESP_OK;
 }
 
-esp_err_t ft_label_set_size(ft_font_handle_t handle, int16_t w, int16_t h)
+esp_err_t gfx_label_set_size(gfx_obj_t * obj, int16_t w, int16_t h)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     font_info->height = h;
     font_info->width = w;
     ESP_LOGD(TAG, "set font size: w:%d, h:%d", w, h);
@@ -326,14 +320,14 @@ esp_err_t ft_label_set_size(ft_font_handle_t handle, int16_t w, int16_t h)
     return ESP_OK;
 }
 
-esp_err_t ft_sw_draw_label(ft_font_handle_t handle)
+esp_err_t gfx_sw_draw_label(gfx_obj_t * obj)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
     esp_err_t ret = ESP_OK;
     FT_Error error;
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     ESP_RETURN_ON_FALSE(font_info->text, ESP_ERR_INVALID_ARG, TAG, "Text is NULL");
 
     if (font_info->mask) {
@@ -341,12 +335,12 @@ esp_err_t ft_sw_draw_label(ft_font_handle_t handle)
         return ESP_OK;
     }
 
-    label_opa_t *mask_buf = (label_opa_t *)malloc(font_info->width * font_info->height);
+    gfx_opa_t *mask_buf = (gfx_opa_t *)malloc(font_info->width * font_info->height);
     ESP_RETURN_ON_FALSE(mask_buf, ESP_ERR_NO_MEM, TAG, "no mem for mask_buf");
-    label_opa_t *mask = (label_opa_t *)mask_buf;
+    gfx_opa_t *mask = (gfx_opa_t *)mask_buf;
     memset(mask, 0x00, font_info->height * font_info->width);
 
-    FT_Face face = font_info->face;
+    FT_Face face = (FT_Face)font_info->face;
     error = FT_Set_Pixel_Sizes(face, 0, font_info->font_size);
     ESP_GOTO_ON_FALSE(!error, ESP_ERR_INVALID_STATE, err, TAG, "error setting font size");
 
@@ -415,63 +409,75 @@ esp_err_t ft_sw_draw_label(ft_font_handle_t handle)
 
         /* increment horizontal position */
         x += slot->advance.x >> 6;
-        // if (x >= (clip_area->x2 - clip_area->x1)) {
         if (x >= font_info->width) {
             break;
         }
     }
 
-    ESP_LOGI(TAG, "mask: %p", mask);
     font_info->mask = mask;
 
     /* output the resulting bitmap to console */
-    // for (int iy = 0; iy < font_info->height; iy++) {
-    //     for (int ix = 0; ix < font_info->width; ix++) {
-    //         int val = mask_buf[iy * font_info->width + ix];
-    //         if (val > 127) {
-    //             putchar('#');
-    //         } else if (val > 64) {
-    //             putchar('+');
-    //         } else if (val > 32) {
-    //             putchar('.');
-    //         } else {
-    //             putchar(' ');
-    //         }
-    //     }
-    //     putchar('\n');
-    // }
-
-    // dest += dest_stride * (font_info->y > 0 ? font_info->y : 0) + (font_info->x > 0 ? font_info->x : 0);
-    // mask += mask_stride * (clip_area.y1 > 0 ? clip_area.y1 : 0) + (clip_area.x1 > 0 ? clip_area.x1 : 0);
-
-    // blend_sw_draw(dest, dest_stride, font_info->color, font_info->opa, mask, &clip_area, mask_stride);
+    for (int iy = 0; iy < font_info->height; iy++) {
+        for (int ix = 0; ix < font_info->width; ix++) {
+            int val = mask_buf[iy * font_info->width + ix];
+            if (val > 127) {
+                putchar('#');
+            } else if (val > 64) {
+                putchar('+');
+            } else if (val > 32) {
+                putchar('.');
+            } else {
+                putchar(' ');
+            }
+        }
+        putchar('\n');
+    }
 
 err:
-    // if (mask_buf) {
-    //     free(mask_buf);
-    // }
     return ret;
 }
 
-esp_err_t ft_label_render_mask(ft_font_handle_t handle, blend_color_t *dest, label_coord_t dest_stride, label_coord_t mask_height, label_area_t *clip_area)
+/**
+ * @brief Blend label object to destination buffer
+ *
+ * @param obj Graphics object containing label data
+ * @param x1 Left boundary of destination area
+ * @param y1 Top boundary of destination area
+ * @param x2 Right boundary of destination area
+ * @param y2 Bottom boundary of destination area
+ * @param dest_buf Destination buffer for blending
+ */
+esp_err_t gfx_draw_label(gfx_obj_t *obj, int x1, int y1, int x2, int y2, const void *dest_buf)
 {
-    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
-    ft_label_property_t *font_info = (ft_label_property_t *)handle;
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     ESP_RETURN_ON_FALSE(font_info->text, ESP_ERR_INVALID_ARG, TAG, "Text is NULL");
 
-    label_opa_t *mask = font_info->mask;
+    gfx_area_t clip_region;
+    clip_region.x1 = MAX(x1, obj->x);
+    clip_region.y1 = MAX(y1, obj->y);
+    clip_region.x2 = MIN(x2, obj->x + obj->width);
+    clip_region.y2 = MIN(y2, obj->y + obj->height);
 
-    label_coord_t mask_stride = font_info->width;
-    mask += mask_height * mask_stride;
+    ESP_LOGI(TAG, "clip_region: %d, %d, %d, %d", clip_region.x1, clip_region.y1, clip_region.x2, clip_region.y2);
 
-    blend_sw_draw(dest, dest_stride, font_info->color, font_info->opa, mask, clip_area, mask_stride);
+    // Check if there's any overlap
+    if (clip_region.x1 >= clip_region.x2 || clip_region.y1 >= clip_region.y2) {
+        return ESP_OK;
+    }
+    gfx_sw_draw_label(obj); //no use now
+
+    gfx_color_t *dest_pixels = (gfx_color_t *)dest_buf + (clip_region.y1 - y1) * (x2 - x1) + (clip_region.x1);
+    gfx_coord_t dest_buffer_stride = (x2 - x1);
+    gfx_coord_t mask_offset_y = (clip_region.y1 - obj->y);
+
+    // Render mask directly in this function
+    gfx_opa_t *mask = font_info->mask;
+    gfx_coord_t mask_stride = font_info->width;
+    mask += mask_offset_y * mask_stride;
+
+    gfx_sw_blend_draw(dest_pixels, dest_buffer_stride, font_info->color, font_info->opa, mask, &clip_region, mask_stride);
 
     return ESP_OK;
-}
-
-void ft_label_print_info(void *src)
-{
-    ft_label_property_t *font_info = (ft_label_property_t *)src;
-    ESP_LOGI(TAG, "font info: x:%d, y:%d, width:%d, height:%d", font_info->x, font_info->y, font_info->width, font_info->height);
 }

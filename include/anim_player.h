@@ -133,11 +133,6 @@ void *anim_player_get_user_data(anim_player_handle_t handle);
  */
 esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src);
 
-typedef enum {
-    CHILD_TYPE_LABEL = 0,
-    CHILD_TYPE_IMAGE,
-} anim_player_child_type_t;
-
 #ifdef __cplusplus
 }
 #endif

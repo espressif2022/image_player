@@ -3,7 +3,9 @@ dependencies:
   idf: '>=5.0'
   image_player:
     version: '*'
-    override_path: ../../
+    # override_path: ../../
+    override_path: /home/xuxin/esp_work/third_party/image_player
+
   esp_mmap_assets:
     version: 1.*
   

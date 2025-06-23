@@ -2,6 +2,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "unity.h"
 #include "unity_test_utils.h"
@@ -11,15 +12,17 @@
 #include "esp_lcd_panel_ops.h"
 #include "bsp/esp-bsp.h"
 #include "esp_timer.h"
+#include "esp_err.h"
+#include "esp_check.h"
 
 #include "anim_player.h"
 #include "mmap_generate_test_4bit.h"
 #include "mmap_generate_test_8bit.h"
-
-#include "ft_label.h"
-#include "ft_blend.h"
-#include "object.h"
 #include "mmap_generate_spiffs_assets.h"
+
+#include "gfx_object.h"
+#include "gfx_draw_label.h"
+#include "gfx_draw_img.h"
 
 static const char *TAG = "player";
 
@@ -31,8 +34,6 @@ static size_t before_free_32bit;
 static anim_player_handle_t handle = NULL;
 static esp_lcd_panel_io_handle_t io_handle = NULL;
 static esp_lcd_panel_handle_t panel_handle = NULL;
-
-ft_font_handle_t obj_label;
 
 void setUp(void)
 {
@@ -59,24 +60,11 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
 {
     esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)anim_player_get_user_data(handle);
     // if(y1 == 0) {
-    //     ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
+        // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
     // }
     esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
-    // // anim_player_flush_ready(handle);
-    // // return;
-    // if (y1 > 320) {
-    //     anim_player_flush_ready(handle);
-    //     return;
-    // }
-
-    // int end_y = y2;
-    // if (y2 > 320) {
-    //     anim_player_flush_ready(handle);
-    //     end_y = 320;
-    // }
-    // // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, end_y);
-    // memcpy(frame_buffer + y1 * 240 + x1, data, (x2 - x1) * (end_y - y1) * sizeof(uint16_t));
     anim_player_flush_ready(handle);
+    // ESP_LOGI(TAG, "Flush done");
 }
 
 extern const lv_image_dsc_t icon1;
@@ -86,130 +74,20 @@ extern const lv_image_dsc_t icon4;
 extern const lv_image_dsc_t icon5;
 extern const lv_image_dsc_t icon5_new;
 
-/* Example function to demonstrate how to use blend_sw_img_draw */
-void blend_sw_img_draw_example(ft_blend_area_t *blend_area)
-{
-    const int32_t square_size = 240;
-    // ESP_LOGI(TAG, "blend_area->buf_area: %p, %d, %d", blend_area->buf_area, blend_area->width, blend_area->height);
-
-    /* Create source and destination buffers */
-    blend_color_t *src_buf = malloc(square_size * square_size * sizeof(blend_color_t));
-    blend_color_t *dest_buf = (blend_color_t *)blend_area->buf_area;
-
-    if (!src_buf) {
-        /* Handle memory allocation error */
-        free(src_buf);
-        return;
-    }
-
-#define POSITION_1_X 50
-#define POSITION_1_Y 50
-
-#define POSITION_2_X 150
-#define POSITION_2_Y 60
-
-    label_area_t clip_area = {
-        .x1 = POSITION_1_X,
-        .y1 = POSITION_1_Y,
-        .x2 = POSITION_1_X + 65,
-        .y2 = POSITION_1_Y + 65
-    };
-
-    /* Calculate the starting position in dest_buf */
-    blend_color_t *dest_start = dest_buf + POSITION_1_Y * blend_area->width + POSITION_1_X;
-
-    const uint16_t *data_pic = (const uint16_t *)icon1.data;
-    const uint8_t *mask = (const uint8_t *)icon1.data + 65 * 65 * 2;
-
-    for (int i = 0; i < 65 * 65; i++) {
-        src_buf[i].full = *(data_pic + i);
-        src_buf[i].full = (src_buf[i].full << 8) | (src_buf[i].full >> 8);  /* Swap16 */
-    }
-
-    int64_t start_time, end_time;
-
-    start_time = esp_timer_get_time();
-
-    blend_sw_img_draw(
-        (blend_color_t *)dest_start,         /* Destination buffer starting position */
-        240,          /* Destination stride */
-        src_buf,
-        65,        /* Source stride */
-        (const label_opa_t *)mask,           /* Mask buffer */
-        65,        /* Mask stride */
-        &clip_area,         /* Clip area */
-        255                 /* Global opacity (fully opaque) */
-    );
-    end_time = esp_timer_get_time();
-    ESP_LOGW(TAG, "sw_img_draw: %.2f ms", (float)(end_time - start_time) / 1000.0f);
-
-    data_pic = (const uint16_t *)icon3.data;
-    mask = (const uint8_t *)icon3.data + 30 * 30 * 2;
-
-    clip_area.x1 = POSITION_2_X;
-    clip_area.y1 = POSITION_2_Y;
-    clip_area.x2 = POSITION_2_X + 30;
-    clip_area.y2 = POSITION_2_Y + 30;
-
-    dest_start = dest_buf + POSITION_2_Y * blend_area->width + POSITION_2_X;
-
-    for (int i = 0; i < 30 * 30; i++) {
-        src_buf[i].full = *(data_pic + i);
-        src_buf[i].full = (src_buf[i].full << 8) | (src_buf[i].full >> 8);  /* Swap16 */
-    }
-
-    start_time = esp_timer_get_time();
-
-    blend_sw_img_draw(
-        (blend_color_t *)dest_start,         /* Destination buffer starting position */
-        240,          /* Destination stride */
-        src_buf,
-        30,        /* Source stride */
-        (const label_opa_t *)mask,           /* Mask buffer */
-        30,        /* Mask stride */
-        &clip_area,         /* Clip area */
-        255                 /* Global opacity (fully opaque) */
-    ); end_time = esp_timer_get_time();
-    ESP_LOGW(TAG, "sw_img_draw: %.2f ms", (float)(end_time - start_time) / 1000.0f);
-
-    /* Clean up */
-    free(src_buf);
-}
-
 static void update_callback(anim_player_handle_t handle, player_event_t event)
 {
     static uint32_t start_time = 0;
     static int total_frames = 0;
-
-    int64_t start_time_label, end_time_label;
 
     switch (event) {
     case PLAYER_EVENT_IDLE:
         ESP_LOGI(TAG, "Event: IDLE");
         break;
     case PLAYER_EVENT_ONE_FRAME_DONE:
-        ESP_LOGI(TAG, "Event: ONE_FRAME_DONE");
+        // ESP_LOGI(TAG, "Event: ONE_FRAME_DONE");
         if (start_time == 0) {
             start_time = esp_timer_get_time();
         }
-
-        /* label */
-        // char buffer[30] = {0};
-        // static uint8_t i = 0;
-        // i++;
-        // sprintf(buffer, "Blending test %d", i);
-        // ft_label_set_text(obj_label, (const char *)buffer);
-
-        // start_time_label = esp_timer_get_time();
-        // ft_sw_draw_label(obj_label, &blend_area);
-        // end_time_label = esp_timer_get_time();
-        // ESP_LOGW(TAG, "sw_label_draw: %.2f ms", (float)(end_time_label - start_time_label) / 1000.0f);
-
-        /* image */
-        // blend_sw_img_draw_example(&blend_area);
-
-        /* draw */
-        // esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 320, blend_area.buf_area);
         total_frames++;
         break;
     case PLAYER_EVENT_ALL_FRAME_DONE:
@@ -282,27 +160,11 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         return;
     }
 
-    // ft_lib_handle_t ft_lib = NULL;
-    // TEST_ESP_OK(ft_library_create(&ft_lib));
-
-    //create font1
-    // ESP_LOGI(TAG, "Create test font:%p", font_config.mem);
-
-    // TEST_ESP_OK(ft_label_new_font(ft_lib, &font_config, &obj_label));
-    // TEST_ESP_OK(ft_label_set_color(obj_label, FT_COLOR_HEX(0xFF0000)));
-    // TEST_ESP_OK(ft_label_set_opa(obj_label, 0xFF));
-    // TEST_ESP_OK(ft_label_set_font_size(obj_label, 15));
-
-    // TEST_ESP_OK(ft_label_set_size(obj_label, 200, 50));
-    // TEST_ESP_OK(ft_label_set_pos(obj_label, 0, 30));
-
-    // TEST_ESP_OK(ft_label_set_text(obj_label, "Blending test"));
-
     handle = anim_player_init(&config);
 
     gfx_font_init();
 
-    ft_label_cfg_t font_config;
+    gfx_lable_cfg_t font_config;
 
     font_config.name = "DejaVuSans.ttf";
     font_config.mem = mmap_assets_get_mem(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
@@ -312,10 +174,10 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     gfx_obj_set_pos(label1, 10, 170);
     gfx_obj_set_size(label1, 200, 50);
 
-    ft_label_set_color(label1->src, FT_COLOR_HEX(0xFF0000));
-    ft_label_set_opa(label1->src, 0xFF);
-    ft_label_set_font_size(label1->src, 20);
-    ft_label_set_text(label1->src, "1234567890");
+    gfx_lable_set_color(label1->src, GFX_COLOR_HEX(0xFF0000));
+    gfx_lable_set_opa(label1->src, 0xFF);
+    gfx_lable_set_font_size(label1->src, 20);
+    gfx_lable_set_text(label1->src, "1234567890");
 
     gfx_obj_t *image1 = gfx_image_create(handle);
     gfx_obj_set_pos(image1, 20, 100);

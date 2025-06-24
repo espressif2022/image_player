@@ -55,7 +55,7 @@ gfx_obj_t * gfx_img_create(anim_player_handle_t handle)
     return obj;
 }
 
-gfx_obj_t * gfx_label_create(anim_player_handle_t handle, const gfx_label_cfg_t *font_cfg)
+gfx_obj_t * gfx_label_create(anim_player_handle_t handle)
 {
     gfx_obj_t *obj = (gfx_obj_t *)malloc(sizeof(gfx_obj_t));
     if (obj == NULL) {
@@ -66,27 +66,43 @@ gfx_obj_t * gfx_label_create(anim_player_handle_t handle, const gfx_label_cfg_t 
     memset(obj, 0, sizeof(gfx_obj_t));
     obj->type = GFX_OBJ_TYPE_LABEL;
     
-    // If font configuration is provided, create font
-    if (font_cfg != NULL) {
-        ft_font_handle_t font_handle;
-        esp_err_t ret = gfx_label_new_font(handle, font_cfg, &font_handle);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to create font for label");
-            free(obj);
-            return NULL;
-        }
-        // Store font handle in object's src field
-        obj->src = font_handle;
+    gfx_label_property_t *label = (gfx_label_property_t *)malloc(sizeof(gfx_label_property_t));
+    if (label == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate memory for label object");
+        free(obj);
+        return NULL;
+    }
+    memset(label, 0, sizeof(gfx_label_property_t));
+    
+    // Apply default font configuration
+    gfx_font_t default_font;
+    uint16_t default_size;
+    gfx_color_t default_color;
+    gfx_opa_t default_opa;
+    
+    // Get default font configuration from internal function
+    gfx_get_default_font_config(&default_font, &default_size, &default_color, &default_opa);
+    
+    label->font_size = default_size;
+    label->color = default_color;
+    label->opa = default_opa;
+    
+    // Set default font automatically
+    if (default_font) {
+        label->face = (void *)default_font;
     }
     
+    obj->src = label;
+    
     anim_player_add_child(handle, GFX_OBJ_TYPE_LABEL, obj);
-    ESP_LOGD(TAG, "Created label object");
+    ESP_LOGD(TAG, "Created label object with default font config");
     return obj;
 }
 
 /*=====================
  * Setter functions
  *====================*/
+
 
 gfx_obj_t * gfx_img_set_src(gfx_obj_t *obj, void *src)
 {
@@ -126,8 +142,6 @@ void gfx_obj_set_pos(gfx_obj_t *obj, uint16_t x, uint16_t y)
     ESP_LOGD(TAG, "Set object position: (%d, %d)", x, y);
 }
 
-extern esp_err_t gfx_label_set_size(gfx_obj_t * obj, int16_t w, int16_t h);
-
 void gfx_obj_set_size(gfx_obj_t *obj, uint16_t w, uint16_t h)
 {
     if (obj == NULL) {
@@ -137,10 +151,6 @@ void gfx_obj_set_size(gfx_obj_t *obj, uint16_t w, uint16_t h)
     
     obj->width = w;
     obj->height = h;
-
-    if (obj->type == GFX_OBJ_TYPE_LABEL) {
-        gfx_label_set_size(obj, w, h);
-    }
     
     ESP_LOGD(TAG, "Set object size: %dx%d", w, h);
 }

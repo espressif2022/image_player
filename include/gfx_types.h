@@ -7,6 +7,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include "stdbool.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -84,6 +85,8 @@ typedef struct gfx_obj {
     uint16_t y;                 /**< Y position */
     uint16_t width;             /**< Object width */
     uint16_t height;            /**< Object height */
+    bool is_visible;            /**< Object visibility */
+    bool is_dirty;              /**< Object dirty flag */
 } gfx_obj_t;
 
 /**********************

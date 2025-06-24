@@ -10,7 +10,6 @@
 #include "esp_err.h"
 #include "esp_check.h"
 
-#include "ft2build.h"
 #include "gfx_font_internal.h"
 #include "anim_player.h"
 #include "gfx_types.h"
@@ -19,23 +18,21 @@
 #include "gfx_comm.h"
 #include "gfx_sw_blend.h"
 
-#include FT_FREETYPE_H
-
 static const char *TAG = "FT_label";
 
-static const gfx_label_property_t ft_property_default = {
-    .face = NULL,
-    .font_size = 20,
-    .opa = 0xFF,
-    .color = {
-        .full = 0xFFFF,
-    },
-    .text = NULL,
-    .x = 0,
-    .y = 0,
-    .width = 100,
-    .height = 50
-};
+// Default font configuration (internal use)
+static gfx_font_t s_default_font = NULL;
+static uint16_t s_default_font_size = 20;
+static gfx_color_t s_default_font_color = {.full = 0xFFFF}; // White
+static gfx_opa_t s_default_font_opa = 0xFF;
+
+void gfx_get_default_font_config(gfx_font_t *font, uint16_t *size, gfx_color_t *color, gfx_opa_t *opa)
+{
+    if (font) *font = s_default_font;
+    if (size) *size = s_default_font_size;
+    if (color) *color = s_default_font_color;
+    if (opa) *opa = s_default_font_opa;
+}
 
 esp_err_t gfx_ft_lib_create(ft_lib_handle_t *ret_lib)
 {
@@ -53,9 +50,6 @@ esp_err_t gfx_ft_lib_create(ft_lib_handle_t *ret_lib)
     error = FT_Init_FreeType((FT_Library *)&lib->ft_library);
     ESP_GOTO_ON_FALSE(!error, ESP_ERR_INVALID_STATE, err, TAG, "error initializing FT library");
     *ret_lib = lib;
-
-    // ESP_LOGI(TAG, "FT library create success, version: %d.%d.%d",
-    //          FREETYPE_LABEL_VER_MAJOR, FREETYPE_LABEL_VER_MINOR, FREETYPE_LABEL_VER_PATCH);
 
     return ret;
 
@@ -89,9 +83,9 @@ esp_err_t gfx_ft_lib_cleanup(ft_lib_handle_t lib_handle)
 
 extern ft_lib_handle_t anim_player_get_font_lib(anim_player_handle_t handle);
 
-esp_err_t gfx_label_new_font(anim_player_handle_t handle, const gfx_label_cfg_t *cfg, ft_font_handle_t *ret_handle)
+esp_err_t gfx_label_new_font(anim_player_handle_t handle, const gfx_label_cfg_t *cfg, gfx_font_t *ret_font)
 {
-    ESP_RETURN_ON_FALSE(handle && cfg && ret_handle, ESP_ERR_INVALID_ARG, TAG, "invalid arguments");
+    ESP_RETURN_ON_FALSE(handle && cfg && ret_font, ESP_ERR_INVALID_ARG, TAG, "invalid arguments");
     ESP_RETURN_ON_FALSE(cfg->mem && cfg->mem_size, ESP_ERR_INVALID_ARG, TAG, "invalid memory input");
 
     FT_Face face = NULL;
@@ -123,14 +117,16 @@ esp_err_t gfx_label_new_font(anim_player_handle_t handle, const gfx_label_cfg_t 
         lib->ft_face_head = new_face_entry;
     }
 
-    gfx_label_property_t *ft_info = (gfx_label_property_t *)calloc(1, sizeof(gfx_label_property_t));
-    ESP_RETURN_ON_FALSE(ft_info, ESP_ERR_NO_MEM, TAG, "no mem for ft_info");
+    gfx_font_t font_handle = (gfx_font_t)face;
+    
+    // Set first font as default font automatically
+    if (s_default_font == NULL) {
+        s_default_font = font_handle;
+        ESP_LOGI(TAG, "Set first font as default: %s", cfg->name);
+    }
 
-    memcpy(ft_info, &ft_property_default, sizeof(gfx_label_property_t));
-    ft_info->face = face;
-
-    ESP_LOGI(TAG, "new font(%s):@%p", cfg->name, ft_info);
-    *ret_handle = ft_info;
+    ESP_LOGI(TAG, "new font(%s):@%p", cfg->name, face);
+    *ret_font = font_handle;
 
     return ESP_OK;
 }
@@ -140,13 +136,24 @@ esp_err_t gfx_label_del_font(gfx_obj_t * obj)
     ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
     gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
-    if (font_info->text) {
-        free(font_info->text);
-    }
     if (font_info) {
+        if (font_info->text) {
+            free(font_info->text);
+        }
+        if (font_info->mask) {
+            free(font_info->mask);
+        }
         free(font_info);
     }
 
+    return ESP_OK;
+}
+
+esp_err_t gfx_label_set_font(gfx_obj_t *obj, gfx_font_t font)
+{
+    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
+    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
+    font_info->face = (void *)font;
     return ESP_OK;
 }
 
@@ -182,6 +189,8 @@ esp_err_t gfx_label_set_text(gfx_obj_t * obj, const char *text)
         strcpy(font_info->text, text);
     }
 
+    obj->is_dirty = true;
+
     return ESP_OK;
 }
 
@@ -215,6 +224,8 @@ esp_err_t gfx_label_set_text_fmt(gfx_obj_t * obj, const char * fmt, ...)
     vsnprintf(font_info->text, len + 1, fmt, args);
     va_end(args);
 
+    obj->is_dirty = true;
+
     return ESP_OK;
 }
 
@@ -225,6 +236,7 @@ esp_err_t gfx_label_set_font_size(gfx_obj_t * obj, uint8_t font_size)
 
     gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     font_info->font_size = font_size;
+    obj->is_dirty = true;
     ESP_LOGD(TAG, "set font size: %d", font_info->font_size);
 
     return ESP_OK;
@@ -252,74 +264,6 @@ esp_err_t gfx_label_set_color(gfx_obj_t * obj, gfx_color_t color)
     return ESP_OK;
 }
 
-esp_err_t gfx_label_set_x(gfx_obj_t * obj, gfx_coord_t x)
-{
-    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
-
-    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
-    font_info->x = x;
-    ESP_LOGD(TAG, "set font x: %d", font_info->x);
-
-    return ESP_OK;
-}
-
-esp_err_t gfx_label_set_y(gfx_obj_t * obj, gfx_coord_t y)
-{
-    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
-
-    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
-    font_info->y = y;
-    ESP_LOGD(TAG, "set font y: %d", font_info->y);
-
-    return ESP_OK;
-}
-
-esp_err_t gfx_label_set_pos(gfx_obj_t * obj, gfx_coord_t x, gfx_coord_t y)
-{
-    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
-
-    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
-    font_info->x = x;
-    font_info->y = y;
-    ESP_LOGD(TAG, "set font pos: %d, %d", x, y);
-
-    return ESP_OK;
-}
-
-esp_err_t gfx_label_set_width(gfx_obj_t * obj, int16_t w)
-{
-    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
-
-    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
-    font_info->width = w;
-    ESP_LOGD(TAG, "set font width: %d", font_info->width);
-
-    return ESP_OK;
-}
-
-esp_err_t gfx_label_set_height(gfx_obj_t * obj, int16_t h)
-{
-    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
-
-    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
-    font_info->height = h;
-    ESP_LOGD(TAG, "set font height: %d", font_info->height);
-
-    return ESP_OK;
-}
-
-esp_err_t gfx_label_set_size(gfx_obj_t * obj, int16_t w, int16_t h)
-{
-    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
-
-    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
-    font_info->height = h;
-    font_info->width = w;
-    ESP_LOGD(TAG, "set font size: w:%d, h:%d", w, h);
-
-    return ESP_OK;
-}
-
 esp_err_t gfx_sw_draw_label(gfx_obj_t * obj)
 {
     ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
@@ -330,15 +274,20 @@ esp_err_t gfx_sw_draw_label(gfx_obj_t * obj)
     gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
     ESP_RETURN_ON_FALSE(font_info->text, ESP_ERR_INVALID_ARG, TAG, "Text is NULL");
 
-    if (font_info->mask) {
+    if (font_info->mask && !obj->is_dirty) {
         // ESP_LOGI(TAG, "mask already rendered");
         return ESP_OK;
     }
 
-    gfx_opa_t *mask_buf = (gfx_opa_t *)malloc(font_info->width * font_info->height);
+    if (font_info->mask) {
+        free(font_info->mask);
+        font_info->mask = NULL;
+    }
+
+    gfx_opa_t *mask_buf = (gfx_opa_t *)malloc(obj->width * obj->height);
     ESP_RETURN_ON_FALSE(mask_buf, ESP_ERR_NO_MEM, TAG, "no mem for mask_buf");
     gfx_opa_t *mask = (gfx_opa_t *)mask_buf;
-    memset(mask, 0x00, font_info->height * font_info->width);
+    memset(mask, 0x00, obj->height * obj->width);
 
     FT_Face face = (FT_Face)font_info->face;
     error = FT_Set_Pixel_Sizes(face, 0, font_info->font_size);
@@ -399,17 +348,17 @@ esp_err_t gfx_sw_draw_label(gfx_obj_t * obj)
             for (int32_t ix = 0; ix < slot->bitmap.width; ix++) {
                 int32_t res_x = ix + x + ofs_x;
                 int32_t res_y = iy + y + ofs_y;
-                if (res_x >= font_info->width || res_y >= font_info->height) {
+                if (res_x >= obj->width || res_y >= obj->height) {
                     continue;
                 }
                 uint8_t value = slot->bitmap.buffer[ix + iy * slot->bitmap.width];
-                *(mask_buf + (res_y + 0) * font_info->width + (res_x + 0)) = value;
+                *(mask_buf + (res_y + 0) * obj->width + (res_x + 0)) = value;
             }
         }
 
         /* increment horizontal position */
         x += slot->advance.x >> 6;
-        if (x >= font_info->width) {
+        if (x >= obj->width) {
             break;
         }
     }
@@ -417,22 +366,23 @@ esp_err_t gfx_sw_draw_label(gfx_obj_t * obj)
     font_info->mask = mask;
 
     /* output the resulting bitmap to console */
-    for (int iy = 0; iy < font_info->height; iy++) {
-        for (int ix = 0; ix < font_info->width; ix++) {
-            int val = mask_buf[iy * font_info->width + ix];
-            if (val > 127) {
-                putchar('#');
-            } else if (val > 64) {
-                putchar('+');
-            } else if (val > 32) {
-                putchar('.');
-            } else {
-                putchar(' ');
-            }
-        }
-        putchar('\n');
-    }
+    // for (int iy = 0; iy < obj->height; iy++) {
+    //     for (int ix = 0; ix < obj->width; ix++) {
+    //         int val = mask_buf[iy * obj->width + ix];
+    //         if (val > 127) {
+    //             putchar('#');
+    //         } else if (val > 64) {
+    //             putchar('+');
+    //         } else if (val > 32) {
+    //             putchar('.');
+    //         } else {
+    //             putchar(' ');
+    //         }
+    //     }
+    //     putchar('\n');
+    // }
 
+    obj->is_dirty = false;
 err:
     return ret;
 }
@@ -460,21 +410,22 @@ esp_err_t gfx_draw_label(gfx_obj_t *obj, int x1, int y1, int x2, int y2, const v
     clip_region.x2 = MIN(x2, obj->x + obj->width);
     clip_region.y2 = MIN(y2, obj->y + obj->height);
 
-    ESP_LOGI(TAG, "clip_region: %d, %d, %d, %d", clip_region.x1, clip_region.y1, clip_region.x2, clip_region.y2);
-
     // Check if there's any overlap
     if (clip_region.x1 >= clip_region.x2 || clip_region.y1 >= clip_region.y2) {
-        return ESP_OK;
+        return ESP_ERR_INVALID_STATE;
     }
+    // ESP_LOGI(TAG, "clip: (%d,%d),(%d,%d)", clip_region.x1, clip_region.y1, clip_region.x2, clip_region.y2);
+
+    // ESP_LOGI(TAG, "draw label");
     gfx_sw_draw_label(obj); //no use now
 
-    gfx_color_t *dest_pixels = (gfx_color_t *)dest_buf + (clip_region.y1 - y1) * (x2 - x1) + (clip_region.x1);
+    gfx_color_t *dest_pixels = (gfx_color_t *)dest_buf + (clip_region.y1 - y1) * (x2 - x1) + (clip_region.x1 - x1);
     gfx_coord_t dest_buffer_stride = (x2 - x1);
     gfx_coord_t mask_offset_y = (clip_region.y1 - obj->y);
 
     // Render mask directly in this function
     gfx_opa_t *mask = font_info->mask;
-    gfx_coord_t mask_stride = font_info->width;
+    gfx_coord_t mask_stride = obj->width;
     mask += mask_offset_y * mask_stride;
 
     gfx_sw_blend_draw(dest_pixels, dest_buffer_stride, font_info->color, font_info->opa, mask, &clip_region, mask_stride);

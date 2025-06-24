@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "esp_err.h"
 #include "esp_check.h"
+#include "driver/gpio.h"
 
 #include "anim_player.h"
 #include "mmap_generate_test_4bit.h"
@@ -62,7 +63,7 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
         // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
     // }
     esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
-    anim_player_flush_ready(handle);
+    // anim_player_flush_ready(handle);
     // ESP_LOGI(TAG, "Flush done");
 }
 
@@ -72,6 +73,25 @@ extern const lv_image_dsc_t icon3;
 extern const lv_image_dsc_t icon4;
 extern const lv_image_dsc_t icon5;
 extern const lv_image_dsc_t icon5_new;
+
+static gfx_obj_t *image1 = NULL;
+static gfx_obj_t *label1 = NULL;
+static gfx_obj_t *label2 = NULL;
+
+static void print_mem(void)
+{
+        static char buffer[256];    /* Make sure buffer is enough for `sprintf` */
+        sprintf(buffer, "   Biggest /     Free /    Total\n"
+                "\t  SRAM : [%8d / %8d / %8d]\n"
+                "\t PSRAM : [%8d / %8d / %8d]",
+                heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                heap_caps_get_total_size(MALLOC_CAP_INTERNAL),
+                heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+                heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+        ESP_LOGI("MEM", "%s", buffer);
+}
 
 static void update_callback(anim_player_handle_t handle, player_event_t event)
 {
@@ -95,9 +115,20 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
         float fps = (total_frames - 1) / duration_sec;
         ESP_LOGI(TAG, "Event: ALL_FRAME_DONE - FPS: %.2f (Frames: %d, Duration: %.2fs)",
                  fps, total_frames, duration_sec);
+        ESP_LOGI(TAG, "Task stk_wm = %d", uxTaskGetStackHighWaterMark(NULL));
+        print_mem();
         // Reset counters for next playback
         start_time = 0;
         total_frames = 0;
+
+        static int sw = 0;
+        sw++;
+        if (sw % 2 == 0) {
+            gfx_img_set_src(image1, (void *)&icon5_new);
+        } else {
+            gfx_img_set_src(image1, (void *)&icon1);
+        }
+        gfx_label_set_text_fmt(label1, "FPS: %.2f", fps);
         break;
     default:
         ESP_LOGI(TAG, "Event: UNKNOWN");
@@ -161,22 +192,28 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
 
     handle = anim_player_init(&config);
 
-    gfx_label_cfg_t font_config;
+    // 创建第一个字体，会自动设置为默认字体
+    gfx_label_cfg_t font_config = {
+        .name = "DejaVuSans.ttf",
+        .mem = mmap_assets_get_mem(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF),
+        .mem_size = mmap_assets_get_size(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF),
+    };
+    gfx_font_t font;
+    gfx_label_new_font(handle, &font_config, &font);
 
-    font_config.name = "DejaVuSans.ttf";
-    font_config.mem = mmap_assets_get_mem(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
-    font_config.mem_size = mmap_assets_get_size(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF);
-
-    gfx_obj_t *label1 = gfx_label_create(handle, &font_config);
-    gfx_obj_set_pos(label1, 10, 170);
-    gfx_obj_set_size(label1, 200, 50);
-
-    gfx_label_set_color(label1, GFX_COLOR_HEX(0xFF0000));
-    gfx_label_set_opa(label1, 0xFF);
-    gfx_label_set_font_size(label1, 20);
+    label1 = gfx_label_create(handle);
+    gfx_obj_set_pos(label1, 10, 10);
+    gfx_obj_set_size(label1, 300, 50);
     gfx_label_set_text(label1, "ABCD");
+    gfx_label_set_color(label1, GFX_COLOR_HEX(0x0000FF));
 
-    gfx_obj_t *image1 = gfx_img_create(handle);
+    label2 = gfx_label_create(handle);
+    gfx_obj_set_pos(label2, 80, 250);
+    gfx_obj_set_size(label2, 300, 50);
+    gfx_label_set_text(label2, "Espressif");
+    gfx_label_set_color(label2, GFX_COLOR_HEX(0xFF0000));
+
+    image1 = gfx_img_create(handle);
     gfx_obj_set_pos(image1, 20, 100);
     gfx_img_set_src(image1, (void *)&icon5_new);
 
@@ -189,9 +226,9 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     const void *src_data;
     size_t src_len;
 
-    for (int i = 0; i < mmap_assets_get_stored_files(assets_handle); i++) {
+    // for (int i = 0; i < mmap_assets_get_stored_files(assets_handle); i++) {
 
-        i = MMAP_TEST_8BIT_OUTPUT_AAF;
+        int i = MMAP_TEST_8BIT_OUTPUT_AAF;
 
         src_data = mmap_assets_get_mem(assets_handle, i);
         src_len = mmap_assets_get_size(assets_handle, i);
@@ -199,16 +236,18 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         ESP_LOGW(TAG, "set src, %s", mmap_assets_get_name(assets_handle, i));
         anim_player_set_src_data(handle, src_data, src_len);
         anim_player_get_segment(handle, &start, &end);
-        // anim_player_set_segment(handle, start, end, 50, true);
-        anim_player_set_segment(handle, start, end, 5, true);
+        anim_player_set_segment(handle, start, end, 50, true);
+        // anim_player_set_segment(handle, start, end, 5, true);
         ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
 
         anim_player_update(handle, PLAYER_ACTION_START);
         vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
+        // vTaskDelay(pdMS_TO_TICKS(1000 * 8));
 
         anim_player_update(handle, PLAYER_ACTION_STOP);
-        vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
-    }
+        // vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
+        vTaskDelay(pdMS_TO_TICKS(1000 * 5));
+    // }
 
     ESP_LOGI(TAG, "test done");
 
@@ -231,6 +270,24 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     spi_bus_free(BSP_LCD_SPI_NUM);
 
     vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // #define BSP_LCD_SPI_CLK       (GPIO_NUM_19)
+    //初始化 gpio 输出，拉方波，频率 100hz
+    gpio_config_t io_config = {
+        .pin_bit_mask = 1 << BSP_LCD_SPI_CLK,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    };
+    gpio_config(&io_config);
+    gpio_set_level(BSP_LCD_SPI_CLK, 0);
+    while (1) {
+        gpio_set_level(BSP_LCD_SPI_CLK, 1);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        gpio_set_level(BSP_LCD_SPI_CLK, 0);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGI(TAG, "clk");
+    }
 }
 
 TEST_CASE("test anim player init and deinit", "[anim_player][4bit]")

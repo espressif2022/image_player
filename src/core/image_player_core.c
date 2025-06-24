@@ -99,8 +99,6 @@ void anim_player_blend_child(anim_player_context_t *ctx, int x1, int y1, int x2,
     while (current != NULL) {
         gfx_obj_t *obj = (gfx_obj_t *)current->src;
 
-        ESP_LOGI(TAG, "blend child: %d, %p", obj->type == GFX_OBJ_TYPE_LABEL ? "label" : "image", obj->src);
-        
         if (obj->type == GFX_OBJ_TYPE_LABEL) {
             gfx_draw_label(obj, x1, y1, x2, y2, dest_buf);
         } else if (obj->type == GFX_OBJ_TYPE_IMAGE) {
@@ -178,12 +176,14 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
         palette_cache[i] = 0xFFFFFFFF;
     }
 
+    uint16_t *buf = NULL;
+
     // Process each split
     for (int split = 0; split < header->splits; split++) {
         const uint8_t *compressed_data = data + offsets[split];
         int compressed_len = header->split_lengths[split];
 
-        uint16_t *buf = (split % 2 == 0) ? buf1 : buf2;
+        buf = (buf == NULL || buf == buf2) ? buf2 : buf1;
 
         esp_err_t decode_result = ESP_FAIL;
         int valid_height;
@@ -265,11 +265,12 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
             continue;
         }
 
-        // Flush decoded data
         xEventGroupClearBits(ctx->events.event_group, WAIT_FLUSH_DONE);
         if (ctx->flush_cb) {
             anim_player_blend_child(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf);
+            // ESP_LOGI(TAG, "1D");
             ctx->flush_cb(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf);
+            // ESP_LOGI(TAG, "2D");
         }
         xEventGroupWaitBits(ctx->events.event_group, WAIT_FLUSH_DONE, pdTRUE, pdFALSE, pdMS_TO_TICKS(20));
     }

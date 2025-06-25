@@ -10,9 +10,8 @@
 #include "anim_vfs.h"
 #include "anim_dec.h"
 
-#include "gfx_types.h"
 #include "gfx_obj.h"
-#include "gfx.h"
+#include "gfx_types.h"
 #include "gfx_sw_blend.h"
 #include "gfx_font_internal.h"
 
@@ -55,13 +54,14 @@ typedef struct {
     anim_player_child_t *child_list;
     ft_lib_handle_t font_lib;
     SemaphoreHandle_t lock_mutex;  /*!< Recursive mutex for protecting rendering operations */
-    
+
     /*!< Frame buffer management */
     uint16_t *frame_buf1;          /*!< Primary frame buffer */
     uint16_t *frame_buf2;          /*!< Secondary frame buffer */
     size_t buf_size;               /*!< Current buffer size */
     bool buffers_allocated;        /*!< Whether buffers are allocated */
     uint8_t mirror_offset;         /*!< Mirror buffer offset for positioning */
+    gfx_color_t default_color;        /*!< Default background color for frame buffers */
 } anim_player_gfx_t;
 
 typedef struct {
@@ -97,13 +97,17 @@ typedef struct {
  */
 static esp_err_t ensure_frame_buffers(anim_player_context_t *ctx, int width, int height)
 {
-    size_t required_size = width * height * sizeof(uint16_t);
-    
+    size_t required_size;
+    if (ctx->display.flags.mirror) {
+        required_size = (width + width + ctx->gfx.mirror_offset) * height * sizeof(uint16_t);
+    } else {
+        required_size = width * height * sizeof(uint16_t);
+    }
+
     if (ctx->gfx.buffers_allocated && ctx->gfx.buf_size >= required_size) {
         return ESP_OK; // Buffers already allocated and sufficient
     }
 
-    // Free existing buffers if they exist
     if (ctx->gfx.frame_buf1) {
         free(ctx->gfx.frame_buf1);
         ctx->gfx.frame_buf1 = NULL;
@@ -113,21 +117,13 @@ static esp_err_t ensure_frame_buffers(anim_player_context_t *ctx, int width, int
         ctx->gfx.frame_buf2 = NULL;
     }
 
-    // Calculate buffer size - if mirror is enabled, allocate larger buffer
-    size_t actual_buf_size = required_size;
-    if (ctx->display.flags.mirror) {
-        // For mirror mode: original width + original width + mirror_offset
-        // We need: (width + width + mirror_offset) * height * sizeof(uint16_t)
-        actual_buf_size = (width + width + ctx->gfx.mirror_offset) * height * sizeof(uint16_t);
-    }
-
-    ctx->gfx.frame_buf1 = (uint16_t *)heap_caps_malloc(actual_buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ctx->gfx.frame_buf1 = (uint16_t *)heap_caps_malloc(required_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!ctx->gfx.frame_buf1) {
         ESP_LOGE(TAG, "Failed to allocate frame buffer 1");
         return ESP_ERR_NO_MEM;
     }
 
-    ctx->gfx.frame_buf2 = (uint16_t *)heap_caps_malloc(actual_buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ctx->gfx.frame_buf2 = (uint16_t *)heap_caps_malloc(required_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!ctx->gfx.frame_buf2) {
         ESP_LOGE(TAG, "Failed to allocate frame buffer 2");
         free(ctx->gfx.frame_buf1);
@@ -135,11 +131,11 @@ static esp_err_t ensure_frame_buffers(anim_player_context_t *ctx, int width, int
         return ESP_ERR_NO_MEM;
     }
 
-    ctx->gfx.buf_size = actual_buf_size;
+    ctx->gfx.buf_size = required_size;
     ctx->gfx.buffers_allocated = true;
-    ESP_LOGI(TAG, "Allocated frame buffers, size: %zu bytes (mirror: %s, width: %d, height: %d)", 
-             actual_buf_size, ctx->display.flags.mirror ? "enabled" : "disabled", width, height);
-    
+    ESP_LOGI(TAG, "new buffers, size: %zu bytes (mirror: %s, w: %d, h: %d)",
+             required_size, ctx->display.flags.mirror ? "enabled" : "disabled", width, height);
+
     return ESP_OK;
 }
 
@@ -172,13 +168,9 @@ static esp_err_t update_mirror_buffer(anim_player_context_t *ctx)
         return ESP_OK; // No buffers allocated yet
     }
 
-    // Since we now use extended frame buffers instead of separate mirror buffer,
-    // we need to reallocate the frame buffers when mirror flag changes
-    // This will be handled by ensure_frame_buffers when next frame is processed
-    // For now, just mark buffers as needing reallocation
     ctx->gfx.buffers_allocated = false;
     ESP_LOGD(TAG, "Marked buffers for reallocation due to mirror flag change");
-    
+
     return ESP_OK;
 }
 
@@ -220,11 +212,16 @@ void anim_player_blend_child(anim_player_context_t *ctx, int x1, int y1, int x2,
 static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_header_t *header, anim_player_context_t *ctx)
 {
     int width = header->width;
+    int height = header->height;
     int split_height = header->split_height;
     int splits = header->splits;
+    uint16_t color_depth = 0;
+
     bool mirror_enabled = ctx->display.flags.mirror;
     uint8_t mirror_offset = ctx->gfx.mirror_offset;
-    
+    uint16_t default_color = ctx->gfx.default_color.full;
+    size_t buf_size = ctx->gfx.buf_size;
+
     uint16_t *offsets = (uint16_t *)malloc(splits * sizeof(uint16_t));
     if (offsets == NULL) {
         ESP_LOGE(TAG, "Failed to allocate memory for offsets");
@@ -233,7 +230,6 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
 
     anim_dec_calculate_offsets(header, offsets);
 
-    size_t required_buf_size = width * split_height * sizeof(uint16_t);
     esp_err_t buf_ret = ensure_frame_buffers(ctx, width, split_height);
     if (buf_ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to ensure frame buffers");
@@ -252,8 +248,6 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
         free(offsets);
         return ESP_FAIL;
     }
-
-    uint16_t color_depth = 0;
 
     if (header->bit_depth == 4) {
         color_depth = 16;
@@ -281,13 +275,16 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
 
         buf_act = (buf_act == NULL || buf_act == ctx->gfx.frame_buf2) ? ctx->gfx.frame_buf1 : ctx->gfx.frame_buf2;
 
-        memset(buf_act, 0, ctx->gfx.buf_size);
+        // Initialize buffer with default color instead of 0
+        for (size_t i = 0; i < buf_size / sizeof(uint16_t); i++) {
+            buf_act[i] = default_color;
+        }
 
         esp_err_t decode_result = ESP_FAIL;
         int valid_height;
 
         if (split == splits - 1) {
-            valid_height = header->height - split * split_height;
+            valid_height = height - split * split_height;
         } else {
             valid_height = split_height;
         }
@@ -324,7 +321,7 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
         if (header->bit_depth == 4) {
             // Calculate stride once
             int stride = mirror_enabled ? (width + width + mirror_offset) : width;
-            
+
             for (int y = 0; y < valid_height; y++) {
                 for (int x = 0; x < width; x += 2) {
                     uint8_t packed_gray = decode_buffer[y * (width / 2) + (x / 2)];
@@ -335,10 +332,10 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
                         uint16_t color = anim_dec_parse_palette(header, index1, ctx->display.flags.swap);
                         palette_cache[index1] = color;
                     }
-                    
+
                     uint16_t color1 = (uint16_t)palette_cache[index1];
                     buf_act[y * stride + x] = color1;
-                    
+
                     // Sync write to mirror position if mirror is enabled
                     if (mirror_enabled) {
                         int mirror_x = width + mirror_offset + width - 1 - x;
@@ -350,10 +347,10 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
                             uint16_t color = anim_dec_parse_palette(header, index2, ctx->display.flags.swap);
                             palette_cache[index2] = color;
                         }
-                        
+
                         uint16_t color2 = (uint16_t)palette_cache[index2];
                         buf_act[y * stride + x + 1] = color2;
-                        
+
                         // Sync write to mirror position if mirror is enabled
                         if (mirror_enabled) {
                             int mirror_x = width + mirror_offset + width - 1 - (x + 1);
@@ -366,7 +363,7 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
         } else if (header->bit_depth == 8) {
             // Calculate stride once
             int stride = mirror_enabled ? (width + width + mirror_offset) : width;
-            
+
             for (int y = 0; y < valid_height; y++) {
                 for (int x = 0; x < width; x++) {
                     uint8_t index = decode_buffer[y * width + x];
@@ -374,10 +371,10 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
                         uint16_t color = anim_dec_parse_palette(header, index, ctx->display.flags.swap);
                         palette_cache[index] = color;
                     }
-                    
+
                     uint16_t color_val = (uint16_t)palette_cache[index];
                     buf_act[y * stride + x] = color_val;
-                    
+
                     // Sync write to mirror position if mirror is enabled
                     if (mirror_enabled) {
                         int mirror_x = width + mirror_offset + width - 1 - x;
@@ -392,7 +389,7 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
 
         if (ctx->flush_cb) {
             xEventGroupClearBits(ctx->events.event_group, WAIT_FLUSH_DONE);
-            
+
             if (mirror_enabled) {
                 int total_width = width + width + mirror_offset;
                 anim_player_blend_child(ctx, 0, split * split_height, total_width, split * split_height + valid_height, buf_act);
@@ -401,7 +398,7 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
                 anim_player_blend_child(ctx, 0, split * split_height, width, split * split_height + valid_height, buf_act);
                 ctx->flush_cb(ctx, 0, split * split_height, width, split * split_height + valid_height, buf_act);
             }
-            
+
             xEventGroupWaitBits(ctx->events.event_group, WAIT_FLUSH_DONE, pdTRUE, pdFALSE, pdMS_TO_TICKS(20));
         }
     }
@@ -470,7 +467,6 @@ static void anim_player_task(void *arg)
                 elapsed = elapsed / 1000;
                 if (elapsed < FPS_TO_MS(run_ctx.config.fps)) {
                     vTaskDelay(pdMS_TO_TICKS(FPS_TO_MS(run_ctx.config.fps) - elapsed));
-                    ESP_LOGD(TAG, "delay: %d ms", (int)(FPS_TO_MS(run_ctx.config.fps) - elapsed));
                 } else {
                     vTaskDelay(pdMS_TO_TICKS(1));
                 }
@@ -678,14 +674,15 @@ anim_player_handle_t anim_player_init(const anim_player_config_t *config)
 
     player->events.event_group = xEventGroupCreate();
     player->gfx.child_list = NULL;
-    
+
     // Initialize buffer management
     player->gfx.frame_buf1 = NULL;
     player->gfx.frame_buf2 = NULL;
     player->gfx.buf_size = 0;
     player->gfx.buffers_allocated = false;
-    player->gfx.mirror_offset = 60;  // Default mirror offset
-    
+    player->gfx.mirror_offset = 60;
+    player->gfx.default_color.full = 0x0000;
+
     // Create recursive render mutex for protecting rendering operations
     player->gfx.lock_mutex = xSemaphoreCreateRecursiveMutex();
     if (player->gfx.lock_mutex == NULL) {
@@ -841,54 +838,6 @@ esp_err_t gfx_player_unlock(anim_player_handle_t handle)
     return ESP_OK;
 }
 
-esp_err_t anim_player_set_mirror(anim_player_handle_t handle, bool mirror)
-{
-    anim_player_context_t *ctx = (anim_player_context_t *)handle;
-    if (ctx == NULL) {
-        ESP_LOGE(TAG, "Invalid player context");
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    if (ctx->display.flags.mirror == mirror) {
-        return ESP_OK; // No change needed
-    }
-
-    ctx->display.flags.mirror = mirror;
-    
-    esp_err_t ret = update_mirror_buffer(ctx);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to update mirror buffer");
-        return ret;
-    }
-
-    ESP_LOGD(TAG, "Mirror flag set to: %s", mirror ? "true" : "false");
-    return ESP_OK;
-}
-
-esp_err_t anim_player_set_mirror_offset(anim_player_handle_t handle, uint8_t offset)
-{
-    anim_player_context_t *ctx = (anim_player_context_t *)handle;
-    if (ctx == NULL) {
-        ESP_LOGE(TAG, "Invalid player context");
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    ctx->gfx.mirror_offset = offset;
-    ESP_LOGD(TAG, "Mirror offset set to: %d", offset);
-    return ESP_OK;
-}
-
-uint8_t anim_player_get_mirror_offset(anim_player_handle_t handle)
-{
-    anim_player_context_t *ctx = (anim_player_context_t *)handle;
-    if (ctx == NULL) {
-        ESP_LOGE(TAG, "Invalid player context");
-        return 0;
-    }
-
-    return ctx->gfx.mirror_offset;
-}
-
 esp_err_t anim_player_set_mirror_config(anim_player_handle_t handle, bool mirror, uint8_t offset)
 {
     anim_player_context_t *ctx = (anim_player_context_t *)handle;
@@ -900,7 +849,7 @@ esp_err_t anim_player_set_mirror_config(anim_player_handle_t handle, bool mirror
     // Set mirror flag
     if (ctx->display.flags.mirror != mirror) {
         ctx->display.flags.mirror = mirror;
-        
+
         esp_err_t ret = update_mirror_buffer(ctx);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to update mirror buffer");
@@ -910,7 +859,22 @@ esp_err_t anim_player_set_mirror_config(anim_player_handle_t handle, bool mirror
 
     // Set mirror offset
     ctx->gfx.mirror_offset = offset;
-    
+
     ESP_LOGD(TAG, "Mirror config set: mirror=%s, offset=%d", mirror ? "true" : "false", offset);
+    return ESP_OK;
+}
+
+esp_err_t anim_player_set_default_color(anim_player_handle_t handle, gfx_color_t color)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // Set default background color
+    ctx->gfx.default_color = color;
+
+    ESP_LOGI(TAG, "Default color set: 0x%04X", color.full);
     return ESP_OK;
 }

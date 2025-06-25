@@ -81,7 +81,7 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
     // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
     // }
     esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
-    // anim_player_flush_ready(handle);
+    anim_player_flush_ready(handle);
 }
 
 static void print_mem(void)
@@ -130,7 +130,7 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
         ESP_LOGI(TAG, "Event: ALL_FRAME_DONE - FPS: %.2f (Frames: %d, Duration: %.2fs)",
                  fps, total_frames, duration_sec);
         // ESP_LOGI(TAG, "Task stk_wm = %d", uxTaskGetStackHighWaterMark(NULL));
-        print_mem();
+        // print_mem();
         start_time = 0;
         total_frames = 0;
         icon_index = 0;
@@ -201,6 +201,8 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
 
     handle = anim_player_init(&config);
 
+    anim_player_set_mirror_config(handle, true, (320 - 200));
+
     gfx_label_cfg_t font_config = {
         .name = "DejaVuSans.ttf",
         .mem = mmap_assets_get_mem(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF),
@@ -210,7 +212,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     gfx_label_new_font(handle, &font_config, &font);
 
     label1 = gfx_label_create(handle);
-    gfx_obj_set_pos(label1, 10, 10);
+    gfx_obj_set_pos(label1, 80, 10);
     gfx_obj_set_size(label1, 300, 50);
     gfx_label_set_text(label1, "ABCD");
     gfx_label_set_font_size(label1, 15);
@@ -223,7 +225,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     // gfx_label_set_color(label2, GFX_COLOR_HEX(0xFF0000));
 
     image1 = gfx_img_create(handle);
-    gfx_obj_set_pos(image1, 100, 20);
+    gfx_obj_set_pos(image1, 150, 20);
     gfx_img_set_src(image1, (void *)&icon1);
 
     const esp_lcd_panel_io_callbacks_t cbs = {
@@ -244,28 +246,30 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     ESP_LOGW(TAG, "set src, %s", mmap_assets_get_name(assets_handle, i));
     anim_player_set_src_data(handle, src_data, src_len);
     anim_player_get_segment(handle, &start, &end);
-    anim_player_set_segment(handle, start, end, 50, true);
-    // anim_player_set_segment(handle, start, end, 5, true);
+    // anim_player_set_segment(handle, start, end, 100, true);
+    anim_player_set_segment(handle, start, end, 60, true);
     ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
 
     anim_player_update(handle, PLAYER_ACTION_START);
-    vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
+    // vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
     // vTaskDelay(pdMS_TO_TICKS(1000 * 8));
 
     static int sw = 0;
 
     while (1) {
-        sw++;
-        gfx_player_lock(handle);
+        sw += 10;
+        // gfx_player_lock(handle);
 
-        // Use mapping table to cycle through icons
-        int icon_idx = sw % ICON_COUNT;
-        gfx_img_set_src(image1, (void *)icon_map[icon_idx]);
-        ESP_LOGI(TAG, "Main loop: icon%d", icon_idx + 1);
+        // // Use mapping table to cycle through icons
+        // int icon_idx = sw % ICON_COUNT;
+        // gfx_img_set_src(image1, (void *)icon_map[icon_idx]);
+        // ESP_LOGI(TAG, "Main loop: icon%d", icon_idx + 1);
 
-        gfx_player_unlock(handle);
+        // gfx_player_unlock(handle);
+        // anim_player_set_default_color(handle, gfx_color_hex(sw));
+        // anim_player_set_mirror_config(handle, (sw / 10) % 2, (320 - 200));
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 
     anim_player_update(handle, PLAYER_ACTION_STOP);

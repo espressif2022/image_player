@@ -16,7 +16,6 @@
 #include "gfx_sw_blend.h"
 #include "gfx_obj.h"
 #include "gfx_draw.h"
-#include "gfx_types.h"
 #include "gfx_comm.h"
 
 static const char *TAG = "gfx_draw_img";

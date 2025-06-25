@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include "esp_err.h"
+#include "gfx_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -149,6 +150,25 @@ esp_err_t gfx_player_lock(anim_player_handle_t handle);
  * @return esp_err_t ESP_OK on success, otherwise an error code
  */
 esp_err_t gfx_player_unlock(anim_player_handle_t handle);
+
+/**
+ * @brief Set the mirror configuration of the animation
+ * 
+ * @param handle Animation player handle
+ * @param mirror Mirror flag
+ * @param offset Mirror offset
+ * @return esp_err_t ESP_OK on success, otherwise an error code
+ */
+esp_err_t anim_player_set_mirror_config(anim_player_handle_t handle, bool mirror, uint8_t offset);
+
+/**
+ * @brief Set the default background color for frame buffers
+ * 
+ * @param handle Animation player handle
+ * @param color Default background color in RGB565 format
+ * @return esp_err_t ESP_OK on success, otherwise an error code
+ */
+esp_err_t anim_player_set_default_color(anim_player_handle_t handle, gfx_color_t color);
 
 #ifdef __cplusplus
 }

@@ -193,5 +193,17 @@ void gfx_obj_delete(gfx_obj_t *obj)
     }
     
     ESP_LOGD(TAG, "Deleting object type: %d", obj->type);
+    if (obj->type == GFX_OBJ_TYPE_LABEL) {
+        gfx_label_property_t *label = (gfx_label_property_t *)obj->src;
+        if (label) {
+            if (label->text) {
+                free(label->text);
+            }
+            if (label->mask) {
+                free(label->mask);
+            }
+            free(label);
+        }
+    }
     free(obj);
 } 

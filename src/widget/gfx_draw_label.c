@@ -26,6 +26,7 @@ static uint16_t s_default_font_size = 20;
 static gfx_color_t s_default_font_color = {.full = 0xFFFF}; // White
 static gfx_opa_t s_default_font_opa = 0xFF;
 
+// Internal function to get default font configuration
 void gfx_get_default_font_config(gfx_font_t *font, uint16_t *size, gfx_color_t *color, gfx_opa_t *opa)
 {
     if (font) *font = s_default_font;
@@ -92,6 +93,8 @@ esp_err_t gfx_label_new_font(anim_player_handle_t handle, const gfx_label_cfg_t 
     FT_Error error;
 
     ft_library_t *lib = anim_player_get_font_lib(handle);
+    ESP_RETURN_ON_FALSE(lib, ESP_ERR_INVALID_STATE, TAG, "font library is NULL");
+    
     ft_face_entry_t *entry;
     
     // Search for existing font
@@ -127,24 +130,6 @@ esp_err_t gfx_label_new_font(anim_player_handle_t handle, const gfx_label_cfg_t 
 
     ESP_LOGI(TAG, "new font(%s):@%p", cfg->name, face);
     *ret_font = font_handle;
-
-    return ESP_OK;
-}
-
-esp_err_t gfx_label_del_font(gfx_obj_t * obj)
-{
-    ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
-
-    gfx_label_property_t *font_info = (gfx_label_property_t *)obj->src;
-    if (font_info) {
-        if (font_info->text) {
-            free(font_info->text);
-        }
-        if (font_info->mask) {
-            free(font_info->mask);
-        }
-        free(font_info);
-    }
 
     return ESP_OK;
 }
@@ -264,7 +249,7 @@ esp_err_t gfx_label_set_color(gfx_obj_t * obj, gfx_color_t color)
     return ESP_OK;
 }
 
-esp_err_t gfx_sw_draw_label(gfx_obj_t * obj)
+esp_err_t gfx_get_glphy_dsc(gfx_obj_t * obj)
 {
     ESP_RETURN_ON_FALSE(obj, ESP_ERR_INVALID_ARG, TAG, "invalid handle");
 
@@ -417,13 +402,12 @@ esp_err_t gfx_draw_label(gfx_obj_t *obj, int x1, int y1, int x2, int y2, const v
     // ESP_LOGI(TAG, "clip: (%d,%d),(%d,%d)", clip_region.x1, clip_region.y1, clip_region.x2, clip_region.y2);
 
     // ESP_LOGI(TAG, "draw label");
-    gfx_sw_draw_label(obj); //no use now
+    gfx_get_glphy_dsc(obj);
 
     gfx_color_t *dest_pixels = (gfx_color_t *)dest_buf + (clip_region.y1 - y1) * (x2 - x1) + (clip_region.x1 - x1);
     gfx_coord_t dest_buffer_stride = (x2 - x1);
     gfx_coord_t mask_offset_y = (clip_region.y1 - obj->y);
 
-    // Render mask directly in this function
     gfx_opa_t *mask = font_info->mask;
     gfx_coord_t mask_stride = obj->width;
     mask += mask_offset_y * mask_stride;

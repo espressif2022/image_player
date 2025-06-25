@@ -35,6 +35,24 @@ static anim_player_handle_t handle = NULL;
 static esp_lcd_panel_io_handle_t io_handle = NULL;
 static esp_lcd_panel_handle_t panel_handle = NULL;
 
+static gfx_obj_t *image1 = NULL;
+static gfx_obj_t *label1 = NULL;
+static gfx_obj_t *label2 = NULL;
+
+extern const gfx_image_dsc_t icon1;
+extern const gfx_image_dsc_t icon2;
+extern const gfx_image_dsc_t icon3;
+extern const gfx_image_dsc_t icon4;
+extern const gfx_image_dsc_t icon5;
+extern const gfx_image_dsc_t icon6;
+extern const gfx_image_dsc_t icon7;
+
+// Icon mapping table for easy access
+static const gfx_image_dsc_t* icon_map[] = {
+    &icon1, &icon2, &icon3, &icon4, &icon5, &icon6, &icon7
+};
+#define ICON_COUNT (sizeof(icon_map) / sizeof(icon_map[0]))
+
 void setUp(void)
 {
     before_free_8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
@@ -60,43 +78,35 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
 {
     esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)anim_player_get_user_data(handle);
     // if(y1 == 0) {
-        // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
+    // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
     // }
+    // printf("1:%p\r\n", data);
     esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
-    // anim_player_flush_ready(handle);
+    // printf("2\r\n");
+    anim_player_flush_ready(handle);
     // ESP_LOGI(TAG, "Flush done");
 }
 
-extern const lv_image_dsc_t icon1;
-extern const lv_image_dsc_t icon2;
-extern const lv_image_dsc_t icon3;
-extern const lv_image_dsc_t icon4;
-extern const lv_image_dsc_t icon5;
-extern const lv_image_dsc_t icon5_new;
-
-static gfx_obj_t *image1 = NULL;
-static gfx_obj_t *label1 = NULL;
-static gfx_obj_t *label2 = NULL;
-
 static void print_mem(void)
 {
-        static char buffer[256];    /* Make sure buffer is enough for `sprintf` */
-        sprintf(buffer, "   Biggest /     Free /    Total\n"
-                "\t  SRAM : [%8d / %8d / %8d]\n"
-                "\t PSRAM : [%8d / %8d / %8d]",
-                heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-                heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                heap_caps_get_total_size(MALLOC_CAP_INTERNAL),
-                heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
-                heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-                heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
-        ESP_LOGI("MEM", "%s", buffer);
+    static char buffer[256];    /* Make sure buffer is enough for `sprintf` */
+    sprintf(buffer, "   Biggest /     Free /    Total\n"
+            "\t  SRAM : [%8d / %8d / %8d]\n"
+            "\t PSRAM : [%8d / %8d / %8d]",
+            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+            heap_caps_get_total_size(MALLOC_CAP_INTERNAL),
+            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+            heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+    ESP_LOGI("MEM", "%s", buffer);
 }
 
 static void update_callback(anim_player_handle_t handle, player_event_t event)
 {
     static uint32_t start_time = 0;
     static int total_frames = 0;
+    static int icon_index = 0;  // Track current icon index
 
     switch (event) {
     case PLAYER_EVENT_IDLE:
@@ -108,6 +118,13 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
             start_time = esp_timer_get_time();
         }
         total_frames++;
+
+        gfx_player_lock(handle);
+
+        gfx_img_set_src(image1, (void *)icon_map[icon_index]);
+        icon_index = (icon_index + 1) % ICON_COUNT;
+
+        gfx_player_unlock(handle);
         break;
     case PLAYER_EVENT_ALL_FRAME_DONE:
         uint32_t end_time = esp_timer_get_time();
@@ -117,17 +134,10 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
                  fps, total_frames, duration_sec);
         ESP_LOGI(TAG, "Task stk_wm = %d", uxTaskGetStackHighWaterMark(NULL));
         print_mem();
-        // Reset counters for next playback
         start_time = 0;
         total_frames = 0;
+        icon_index = 0;
 
-        static int sw = 0;
-        sw++;
-        if (sw % 2 == 0) {
-            gfx_img_set_src(image1, (void *)&icon5_new);
-        } else {
-            gfx_img_set_src(image1, (void *)&icon1);
-        }
         gfx_label_set_text_fmt(label1, "FPS: %.2f", fps);
         break;
     default:
@@ -167,14 +177,16 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
         .user_data = panel_handle,
         .flags = {
             .swap = true,
+            .mirror = true,
         },
         .task = ANIM_PLAYER_INIT_CONFIG()
     };
     // config.task.task_stack_caps = MALLOC_CAP_INTERNAL;
     config.task.task_stack_caps = MALLOC_CAP_DEFAULT;
-    config.task.task_affinity = 1;
+    // config.task.task_affinity = 1;
+    config.task.task_affinity = 0;
     config.task.task_priority = 7;
-    config.task.task_stack = 20*1024;
+    config.task.task_stack = 20 * 1024;
 
     mmap_assets_handle_t assets_font = NULL;
     const mmap_assets_config_t asset_config_font = {
@@ -192,7 +204,6 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
 
     handle = anim_player_init(&config);
 
-    // 创建第一个字体，会自动设置为默认字体
     gfx_label_cfg_t font_config = {
         .name = "DejaVuSans.ttf",
         .mem = mmap_assets_get_mem(assets_font, MMAP_SPIFFS_ASSETS_DEJAVUSANS_TTF),
@@ -208,14 +219,14 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     gfx_label_set_color(label1, GFX_COLOR_HEX(0x0000FF));
 
     label2 = gfx_label_create(handle);
-    gfx_obj_set_pos(label2, 80, 250);
+    gfx_obj_set_pos(label2, 80, 80);
     gfx_obj_set_size(label2, 300, 50);
     gfx_label_set_text(label2, "Espressif");
     gfx_label_set_color(label2, GFX_COLOR_HEX(0xFF0000));
 
     image1 = gfx_img_create(handle);
-    gfx_obj_set_pos(image1, 20, 100);
-    gfx_img_set_src(image1, (void *)&icon5_new);
+    gfx_obj_set_pos(image1, 80, 150);
+    gfx_img_set_src(image1, (void *)&icon1);
 
     const esp_lcd_panel_io_callbacks_t cbs = {
         .on_color_trans_done = flush_io_ready,
@@ -226,28 +237,41 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     const void *src_data;
     size_t src_len;
 
-    // for (int i = 0; i < mmap_assets_get_stored_files(assets_handle); i++) {
+    int i = MMAP_TEST_8BIT_OUTPUT_AAF;
 
-        int i = MMAP_TEST_8BIT_OUTPUT_AAF;
+    src_data = mmap_assets_get_mem(assets_handle, i);
+    src_len = mmap_assets_get_size(assets_handle, i);
 
-        src_data = mmap_assets_get_mem(assets_handle, i);
-        src_len = mmap_assets_get_size(assets_handle, i);
+    ESP_LOGW(TAG, "set src, %s", mmap_assets_get_name(assets_handle, i));
+    anim_player_set_src_data(handle, src_data, src_len);
+    anim_player_get_segment(handle, &start, &end);
+    anim_player_set_segment(handle, start, end, 50, true);
+    // anim_player_set_segment(handle, start, end, 5, true);
+    ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
 
-        ESP_LOGW(TAG, "set src, %s", mmap_assets_get_name(assets_handle, i));
-        anim_player_set_src_data(handle, src_data, src_len);
-        anim_player_get_segment(handle, &start, &end);
-        anim_player_set_segment(handle, start, end, 50, true);
-        // anim_player_set_segment(handle, start, end, 5, true);
-        ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
+    anim_player_update(handle, PLAYER_ACTION_START);
+    vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
+    // vTaskDelay(pdMS_TO_TICKS(1000 * 8));
 
-        anim_player_update(handle, PLAYER_ACTION_START);
-        vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
-        // vTaskDelay(pdMS_TO_TICKS(1000 * 8));
+    static int sw = 0;
 
-        anim_player_update(handle, PLAYER_ACTION_STOP);
-        // vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
-        vTaskDelay(pdMS_TO_TICKS(1000 * 5));
-    // }
+    while (1) {
+        sw++;
+        gfx_player_lock(handle);
+
+        // Use mapping table to cycle through icons
+        int icon_idx = sw % ICON_COUNT;
+        gfx_img_set_src(image1, (void *)icon_map[icon_idx]);
+        ESP_LOGI(TAG, "Main loop: icon%d", icon_idx + 1);
+
+        gfx_player_unlock(handle);
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    anim_player_update(handle, PLAYER_ACTION_STOP);
+    // vTaskDelay(pdMS_TO_TICKS(1000 * delay_ms));
+    vTaskDelay(pdMS_TO_TICKS(1000 * 5));
 
     ESP_LOGI(TAG, "test done");
 
@@ -275,9 +299,9 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     //初始化 gpio 输出，拉方波，频率 100hz
     gpio_config_t io_config = {
         .pin_bit_mask = 1 << BSP_LCD_SPI_CLK,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                          .mode = GPIO_MODE_OUTPUT,
+                          .pull_up_en = GPIO_PULLUP_DISABLE,
+                          .pull_down_en = GPIO_PULLDOWN_DISABLE,
     };
     gpio_config(&io_config);
     gpio_set_level(BSP_LCD_SPI_CLK, 0);

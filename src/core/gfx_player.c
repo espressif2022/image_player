@@ -66,9 +66,11 @@ typedef struct {
     uint16_t screen_h;
     struct {
         unsigned char swap: 1;
+        unsigned char mirror: 1;
     } flags;
     child_t *child_list;
     ft_lib_handle_t font_lib;
+    SemaphoreHandle_t render_mutex;  /*!< Recursive mutex for protecting rendering operations */
 } anim_player_context_t;
 
 typedef struct {
@@ -95,17 +97,23 @@ void anim_player_blend_child(anim_player_context_t *ctx, int x1, int y1, int x2,
         return;
     }
 
-    child_t *current = ctx->child_list;
-    while (current != NULL) {
-        gfx_obj_t *obj = (gfx_obj_t *)current->src;
+    // Lock the recursive render mutex to prevent external operations during rendering
+    if (ctx->render_mutex && xSemaphoreTakeRecursive(ctx->render_mutex, portMAX_DELAY) == pdTRUE) {
+        child_t *current = ctx->child_list;
+        while (current != NULL) {
+            gfx_obj_t *obj = (gfx_obj_t *)current->src;
 
-        if (obj->type == GFX_OBJ_TYPE_LABEL) {
-            gfx_draw_label(obj, x1, y1, x2, y2, dest_buf);
-        } else if (obj->type == GFX_OBJ_TYPE_IMAGE) {
-            gfx_draw_img(obj, x1, y1, x2, y2, dest_buf);
+            if (obj->type == GFX_OBJ_TYPE_LABEL) {
+                gfx_draw_label(obj, x1, y1, x2, y2, dest_buf);
+            } else if (obj->type == GFX_OBJ_TYPE_IMAGE) {
+                gfx_draw_img(obj, x1, y1, x2, y2, dest_buf);
+            }
+            
+            current = current->next;
         }
         
-        current = current->next;
+        // Release the recursive mutex after rendering is complete
+        xSemaphoreGiveRecursive(ctx->render_mutex);
     }
 }
 
@@ -176,14 +184,14 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
         palette_cache[i] = 0xFFFFFFFF;
     }
 
-    uint16_t *buf = NULL;
+    uint16_t *buf_act = NULL;
 
     // Process each split
     for (int split = 0; split < header->splits; split++) {
         const uint8_t *compressed_data = data + offsets[split];
         int compressed_len = header->split_lengths[split];
 
-        buf = (buf == NULL || buf == buf2) ? buf2 : buf1;
+        buf_act = (buf_act == NULL || buf_act == buf2) ? buf1 : buf2;
 
         esp_err_t decode_result = ESP_FAIL;
         int valid_height;
@@ -236,14 +244,14 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
                         uint16_t color = anim_dec_parse_palette(header, index1, ctx->flags.swap);
                         palette_cache[index1] = color;
                     }
-                    buf[y * header->width + x] = (uint16_t)palette_cache[index1];
+                    buf_act[y * header->width + x] = (uint16_t)palette_cache[index1];
 
                     if (x + 1 < header->width) {
                         if (palette_cache[index2] == 0xFFFFFFFF) {
                             uint16_t color = anim_dec_parse_palette(header, index2, ctx->flags.swap);
                             palette_cache[index2] = color;
                         }
-                        buf[y * header->width + x + 1] = (uint16_t)palette_cache[index2];
+                        buf_act[y * header->width + x + 1] = (uint16_t)palette_cache[index2];
                     }
                 }
             }
@@ -257,7 +265,7 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
                         palette_cache[index] = color;
                     }
                     // Copy the color value directly
-                    buf[y * header->width + x] = (uint16_t)palette_cache[index];
+                    buf_act[y * header->width + x] = (uint16_t)palette_cache[index];
                 }
             }
         } else {
@@ -267,10 +275,9 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
 
         xEventGroupClearBits(ctx->events.event_group, WAIT_FLUSH_DONE);
         if (ctx->flush_cb) {
-            anim_player_blend_child(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf);
-            // ESP_LOGI(TAG, "1D");
-            ctx->flush_cb(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf);
-            // ESP_LOGI(TAG, "2D");
+            // ESP_LOGI(TAG, "flush_cb, mirror:%d", ctx->flags.mirror);
+            anim_player_blend_child(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf_act);
+            ctx->flush_cb(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf_act);
         }
         xEventGroupWaitBits(ctx->events.event_group, WAIT_FLUSH_DONE, pdTRUE, pdFALSE, pdMS_TO_TICKS(20));
     }
@@ -552,10 +559,23 @@ anim_player_handle_t anim_player_init(const anim_player_config_t *config)
     player->flush_cb = config->flush_cb;
     player->update_cb = config->update_cb;
     player->user_data = config->user_data;
+
+    player->flags.mirror = config->flags.mirror;
     player->flags.swap = config->flags.swap;
+    
     player->events.event_group = xEventGroupCreate();
     player->events.event_queue = xQueueCreate(5, sizeof(anim_player_event_t));
     player->child_list = NULL;
+    
+    // Create recursive render mutex for protecting rendering operations
+    player->render_mutex = xSemaphoreCreateRecursiveMutex();
+    if (player->render_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create recursive render mutex");
+        vEventGroupDelete(player->events.event_group);
+        vQueueDelete(player->events.event_queue);
+        free(player);
+        return NULL;
+    }
     
     // Initialize font library for this player instance
     esp_err_t font_ret = gfx_ft_lib_create(&player->font_lib);
@@ -623,6 +643,12 @@ void anim_player_deinit(anim_player_handle_t handle)
         ctx->font_lib = NULL;
     }
 
+    // Delete render mutex
+    if (ctx->render_mutex) {
+        vSemaphoreDelete(ctx->render_mutex);
+        ctx->render_mutex = NULL;
+    }
+
     // Free player context
     free(ctx);
 }
@@ -659,5 +685,47 @@ esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src
     }
 
     ESP_LOGI(TAG, "Added child(%p): type=%d, src=%p", new_child, new_child->type, new_child->src);
+    return ESP_OK;
+}
+
+esp_err_t gfx_player_lock(anim_player_handle_t handle)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (ctx->render_mutex == NULL) {
+        ESP_LOGE(TAG, "Recursive render mutex not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTakeRecursive(ctx->render_mutex, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire recursive render mutex");
+        return ESP_ERR_TIMEOUT;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t gfx_player_unlock(anim_player_handle_t handle)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (ctx->render_mutex == NULL) {
+        ESP_LOGE(TAG, "Recursive render mutex not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreGiveRecursive(ctx->render_mutex) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to release recursive render mutex");
+        return ESP_ERR_INVALID_STATE;
+    }
+
     return ESP_OK;
 }

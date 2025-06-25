@@ -43,6 +43,7 @@ typedef struct {
 
     struct {
         unsigned char swap:1;
+        unsigned char mirror:1;
     } flags;
     struct {
         int task_priority;      ///< Task priority (1-20)
@@ -132,6 +133,22 @@ void *anim_player_get_user_data(anim_player_handle_t handle);
  * @return esp_err_t ESP_OK on success, otherwise an error code
  */
 esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src);
+
+/**
+ * @brief Lock the recursive render mutex to prevent rendering during external operations
+ * 
+ * @param handle Animation player handle
+ * @return esp_err_t ESP_OK on success, otherwise an error code
+ */
+esp_err_t gfx_player_lock(anim_player_handle_t handle);
+
+/**
+ * @brief Unlock the recursive render mutex after external operations
+ * 
+ * @param handle Animation player handle
+ * @return esp_err_t ESP_OK on success, otherwise an error code
+ */
+esp_err_t gfx_player_unlock(anim_player_handle_t handle);
 
 #ifdef __cplusplus
 }

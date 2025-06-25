@@ -55,7 +55,7 @@ typedef struct {
 esp_err_t gfx_ft_lib_create(ft_lib_handle_t *ret_lib);
 esp_err_t gfx_ft_lib_cleanup(ft_lib_handle_t lib_handle);
 
-esp_err_t gfx_sw_draw_label(gfx_obj_t * obj);
+esp_err_t gfx_get_glphy_dsc(gfx_obj_t * obj);
 
 /**
  * @brief Get default font handle (internal use)

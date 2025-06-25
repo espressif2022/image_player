@@ -20,7 +20,7 @@
     mask++;                                                     \
     dest_buf++;
 
-static inline gfx_color_t gfx_blend_color_mix(gfx_color_t c1, gfx_color_t c2, uint8_t mix)
+gfx_color_t gfx_blend_color_mix(gfx_color_t c1, gfx_color_t c2, uint8_t mix)
 {
     gfx_color_t ret;
 

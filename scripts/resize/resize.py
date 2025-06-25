@@ -6,8 +6,8 @@ import glob
 gif_files = glob.glob("*.gif")
 
 # 新尺寸
-new_width = 300
-new_height = 300
+new_width = 100
+new_height = 100
 
 # 处理每个 GIF 文件
 for gif_file in gif_files:

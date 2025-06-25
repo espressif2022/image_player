@@ -80,11 +80,8 @@ static void flush_callback(anim_player_handle_t handle, int x1, int y1, int x2, 
     // if(y1 == 0) {
     // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
     // }
-    // printf("1:%p\r\n", data);
     esp_lcd_panel_draw_bitmap(panel, x1, y1, x2, y2, data);
-    // printf("2\r\n");
-    anim_player_flush_ready(handle);
-    // ESP_LOGI(TAG, "Flush done");
+    // anim_player_flush_ready(handle);
 }
 
 static void print_mem(void)
@@ -132,13 +129,13 @@ static void update_callback(anim_player_handle_t handle, player_event_t event)
         float fps = (total_frames - 1) / duration_sec;
         ESP_LOGI(TAG, "Event: ALL_FRAME_DONE - FPS: %.2f (Frames: %d, Duration: %.2fs)",
                  fps, total_frames, duration_sec);
-        ESP_LOGI(TAG, "Task stk_wm = %d", uxTaskGetStackHighWaterMark(NULL));
+        // ESP_LOGI(TAG, "Task stk_wm = %d", uxTaskGetStackHighWaterMark(NULL));
         print_mem();
         start_time = 0;
         total_frames = 0;
         icon_index = 0;
 
-        gfx_label_set_text_fmt(label1, "FPS: %.2f", fps);
+        gfx_label_set_text_fmt(label1, "anim_player FPS: %.2f", fps);
         break;
     default:
         ESP_LOGI(TAG, "Event: UNKNOWN");
@@ -216,16 +213,17 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     gfx_obj_set_pos(label1, 10, 10);
     gfx_obj_set_size(label1, 300, 50);
     gfx_label_set_text(label1, "ABCD");
+    gfx_label_set_font_size(label1, 15);
     gfx_label_set_color(label1, GFX_COLOR_HEX(0x0000FF));
 
-    label2 = gfx_label_create(handle);
-    gfx_obj_set_pos(label2, 80, 80);
-    gfx_obj_set_size(label2, 300, 50);
-    gfx_label_set_text(label2, "Espressif");
-    gfx_label_set_color(label2, GFX_COLOR_HEX(0xFF0000));
+    // label2 = gfx_label_create(handle);
+    // gfx_obj_set_pos(label2, 80, 80);
+    // gfx_obj_set_size(label2, 300, 50);
+    // gfx_label_set_text(label2, "Espressif");
+    // gfx_label_set_color(label2, GFX_COLOR_HEX(0xFF0000));
 
     image1 = gfx_img_create(handle);
-    gfx_obj_set_pos(image1, 80, 150);
+    gfx_obj_set_pos(image1, 100, 20);
     gfx_img_set_src(image1, (void *)&icon1);
 
     const esp_lcd_panel_io_callbacks_t cbs = {
@@ -237,7 +235,8 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     const void *src_data;
     size_t src_len;
 
-    int i = MMAP_TEST_8BIT_OUTPUT_AAF;
+    // int i = MMAP_TEST_8BIT_OUTPUT_AAF;
+    int i = MMAP_TEST_8BIT_GIFGIT_AAF;
 
     src_data = mmap_assets_get_mem(assets_handle, i);
     src_len = mmap_assets_get_size(assets_handle, i);
@@ -294,24 +293,6 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     spi_bus_free(BSP_LCD_SPI_NUM);
 
     vTaskDelay(pdMS_TO_TICKS(1000));
-
-    // #define BSP_LCD_SPI_CLK       (GPIO_NUM_19)
-    //初始化 gpio 输出，拉方波，频率 100hz
-    gpio_config_t io_config = {
-        .pin_bit_mask = 1 << BSP_LCD_SPI_CLK,
-                          .mode = GPIO_MODE_OUTPUT,
-                          .pull_up_en = GPIO_PULLUP_DISABLE,
-                          .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    };
-    gpio_config(&io_config);
-    gpio_set_level(BSP_LCD_SPI_CLK, 0);
-    while (1) {
-        gpio_set_level(BSP_LCD_SPI_CLK, 1);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        gpio_set_level(BSP_LCD_SPI_CLK, 0);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(TAG, "clk");
-    }
 }
 
 TEST_CASE("test anim player init and deinit", "[anim_player][4bit]")

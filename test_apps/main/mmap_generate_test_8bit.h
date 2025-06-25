@@ -13,35 +13,11 @@
 
 #include "esp_mmap_assets.h"
 
-#define MMAP_TEST_8BIT_FILES           27
-#define MMAP_TEST_8BIT_CHECKSUM        0x0F6D
+#define MMAP_TEST_8BIT_FILES           3
+#define MMAP_TEST_8BIT_CHECKSUM        0x563B
 
 enum MMAP_TEST_8BIT_LISTS {
-    MMAP_TEST_8BIT_ANGER_ENTER_AAF = 0,        /*!< Anger_enter.aaf */
-    MMAP_TEST_8BIT_ANGER_LOOP_AAF = 1,        /*!< Anger_loop.aaf */
-    MMAP_TEST_8BIT_ANGER_RETURN_AAF = 2,        /*!< Anger_return.aaf */
-    MMAP_TEST_8BIT_ASKING_AAF = 3,        /*!< asking.aaf */
-    MMAP_TEST_8BIT_BLINK_ONCE_AAF = 4,        /*!< blink_once.aaf */
-    MMAP_TEST_8BIT_BLINK_QUICK_AAF = 5,        /*!< blink_quick.aaf */
-    MMAP_TEST_8BIT_CONNECTING_AAF = 6,        /*!< connecting.aaf */
-    MMAP_TEST_8BIT_HAPP_RETURN_AAF = 7,        /*!< happ_return.aaf */
-    MMAP_TEST_8BIT_HAPPY_ENTER_AAF = 8,        /*!< happy_enter.aaf */
-    MMAP_TEST_8BIT_HAPPY_LOOP_AAF = 9,        /*!< happy_loop.aaf */
-    MMAP_TEST_8BIT_LEFT_ENTER_AAF = 10,        /*!< left_enter.aaf */
-    MMAP_TEST_8BIT_LEFT_LOOP_AAF = 11,        /*!< left_loop.aaf */
-    MMAP_TEST_8BIT_LEFT_RETURN_AAF = 12,        /*!< left_return.aaf */
-    MMAP_TEST_8BIT_OUTPUT_AAF = 13,        /*!< output.aaf */
-    MMAP_TEST_8BIT_PANIC_ENTER_AAF = 14,        /*!< panic_enter.aaf */
-    MMAP_TEST_8BIT_PANIC_LOOP_AAF = 15,        /*!< panic_loop.aaf */
-    MMAP_TEST_8BIT_PANIC_RETURN_AAF = 16,        /*!< panic_return.aaf */
-    MMAP_TEST_8BIT_RIGHT_ENTER_AAF = 17,        /*!< right_enter.aaf */
-    MMAP_TEST_8BIT_RIGHT_LOOP_AAF = 18,        /*!< right_loop.aaf */
-    MMAP_TEST_8BIT_RIGHT_RETURN_AAF = 19,        /*!< right_return.aaf */
-    MMAP_TEST_8BIT_SAD_ENTER_AAF = 20,        /*!< sad_enter.aaf */
-    MMAP_TEST_8BIT_SAD_LOOP_AAF = 21,        /*!< sad_loop.aaf */
-    MMAP_TEST_8BIT_SAD_RETURN_AAF = 22,        /*!< sad_return.aaf */
-    MMAP_TEST_8BIT_SCORN_ENTER_AAF = 23,        /*!< scorn_enter.aaf */
-    MMAP_TEST_8BIT_SCORN_LOOP_AAF = 24,        /*!< scorn_loop.aaf */
-    MMAP_TEST_8BIT_SCORN_RETURN_AAF = 25,        /*!< scorn_return.aaf */
-    MMAP_TEST_8BIT_WAKE_AAF = 26,        /*!< wake.aaf */
+    MMAP_TEST_8BIT_GIFGIT_AAF = 0,        /*!< gifgit.aaf */
+    MMAP_TEST_8BIT_OUTPUT_AAF = 1,        /*!< output.aaf */
+    MMAP_TEST_8BIT_WAKE_AAF = 2,        /*!< wake.aaf */
 };

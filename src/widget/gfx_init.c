@@ -37,4 +37,4 @@ esp_err_t gfx_deinit(void)
 {
     ESP_LOGI(TAG, "GFX framework deinitialized");
     return ESP_OK;
-} 
+}

@@ -46,18 +46,18 @@ void gfx_draw_img(gfx_obj_t *obj, int x1, int y1, int x2, int y2, const void *de
         ESP_LOGW(TAG, "Invalid object or source");
         return;
     }
-    
+
     if (obj->type != GFX_OBJ_TYPE_IMAGE) {
         ESP_LOGW(TAG, "Object is not an image type");
         return;
     }
-    
+
     gfx_image_dsc_t *image_desc = (gfx_image_dsc_t *)obj->src;
     gfx_image_header_t *image_header = &image_desc->header;
 
     // Check color format - only support RGB565A8 format
     if (image_header->cf != GFX_COLOR_FORMAT_RGB565A8) {
-        ESP_LOGW(TAG, "Unsupported color format: 0x%02X, only RGB565A8 (0x%02X) is supported", 
+        ESP_LOGW(TAG, "Unsupported color format: 0x%02X, only RGB565A8 (0x%02X) is supported",
                  image_header->cf, GFX_COLOR_FORMAT_RGB565A8);
         return;
     }

@@ -23,16 +23,13 @@ static const char *TAG = "anim_player";
 #define WAIT_FLUSH_DONE BIT2
 #define WAIT_STOP       BIT3
 #define WAIT_STOP_DONE  BIT4
+#define PLAYER_START    BIT5
+#define PLAYER_STOP     BIT6
 
 #define FPS_TO_MS(fps) (1000 / (fps))  // Convert FPS to milliseconds
 
 typedef struct {
-    player_action_t action;
-} anim_player_event_t;
-
-typedef struct {
     EventGroupHandle_t event_group;
-    QueueHandle_t event_queue;
 } anim_player_events_t;
 
 typedef struct {
@@ -41,46 +38,149 @@ typedef struct {
     anim_vfs_handle_t file_desc;
 } anim_player_info_t;
 
-typedef struct child_t {
+typedef struct anim_player_child_t {
     int type;
     void *src;
-    // size_t len;
-    // uint16_t x1;
-    // uint16_t y1;
-    struct child_t *next;  // Pointer to next child in the list
-} child_t;
+    struct anim_player_child_t *next;  // Pointer to next child in the list
+} anim_player_child_t;
 
 typedef struct {
-    anim_player_info_t info;
-    int run_start;
-    int run_end;
-    bool repeat;
-    int fps;
-    anim_flush_cb_t flush_cb;
-    anim_update_cb_t update_cb;
-    void *user_data;
-    anim_player_events_t events;
-    TaskHandle_t handle_task;
-
-    uint16_t screen_w;
-    uint16_t screen_h;
     struct {
         unsigned char swap: 1;
         unsigned char mirror: 1;
     } flags;
-    child_t *child_list;
-    ft_lib_handle_t font_lib;
-    SemaphoreHandle_t render_mutex;  /*!< Recursive mutex for protecting rendering operations */
-} anim_player_context_t;
+} anim_player_display_t;
 
 typedef struct {
-    player_action_t action;
+    anim_player_child_t *child_list;
+    ft_lib_handle_t font_lib;
+    SemaphoreHandle_t lock_mutex;  /*!< Recursive mutex for protecting rendering operations */
+    
+    /*!< Frame buffer management */
+    uint16_t *frame_buf1;          /*!< Primary frame buffer */
+    uint16_t *frame_buf2;          /*!< Secondary frame buffer */
+    size_t buf_size;               /*!< Current buffer size */
+    bool buffers_allocated;        /*!< Whether buffers are allocated */
+    uint8_t mirror_offset;         /*!< Mirror buffer offset for positioning */
+} anim_player_gfx_t;
+
+typedef struct {
     int run_start;
     int run_end;
     bool repeat;
     int fps;
+} anim_player_params_t;
+
+typedef struct {
+    anim_player_info_t info;
+    anim_player_params_t run_cfg;
+    anim_flush_cb_t flush_cb;
+    anim_update_cb_t update_cb;
+    anim_player_events_t events;
+    anim_player_display_t display;
+    anim_player_gfx_t gfx;
+    void *user_data;
+} anim_player_context_t;
+
+typedef struct {
+    player_action_t action;
+    anim_player_params_t config;
     int64_t last_frame_time;
 } anim_player_run_ctx_t;
+
+/**
+ * @brief Allocate or reallocate frame buffers if needed
+ * @param ctx Player context
+ * @param width Image width in pixels
+ * @param height Image height in pixels
+ * @return esp_err_t ESP_OK on success, otherwise error code
+ */
+static esp_err_t ensure_frame_buffers(anim_player_context_t *ctx, int width, int height)
+{
+    size_t required_size = width * height * sizeof(uint16_t);
+    
+    if (ctx->gfx.buffers_allocated && ctx->gfx.buf_size >= required_size) {
+        return ESP_OK; // Buffers already allocated and sufficient
+    }
+
+    // Free existing buffers if they exist
+    if (ctx->gfx.frame_buf1) {
+        free(ctx->gfx.frame_buf1);
+        ctx->gfx.frame_buf1 = NULL;
+    }
+    if (ctx->gfx.frame_buf2) {
+        free(ctx->gfx.frame_buf2);
+        ctx->gfx.frame_buf2 = NULL;
+    }
+
+    // Calculate buffer size - if mirror is enabled, allocate larger buffer
+    size_t actual_buf_size = required_size;
+    if (ctx->display.flags.mirror) {
+        // For mirror mode: original width + original width + mirror_offset
+        // We need: (width + width + mirror_offset) * height * sizeof(uint16_t)
+        actual_buf_size = (width + width + ctx->gfx.mirror_offset) * height * sizeof(uint16_t);
+    }
+
+    ctx->gfx.frame_buf1 = (uint16_t *)heap_caps_malloc(actual_buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!ctx->gfx.frame_buf1) {
+        ESP_LOGE(TAG, "Failed to allocate frame buffer 1");
+        return ESP_ERR_NO_MEM;
+    }
+
+    ctx->gfx.frame_buf2 = (uint16_t *)heap_caps_malloc(actual_buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!ctx->gfx.frame_buf2) {
+        ESP_LOGE(TAG, "Failed to allocate frame buffer 2");
+        free(ctx->gfx.frame_buf1);
+        ctx->gfx.frame_buf1 = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+
+    ctx->gfx.buf_size = actual_buf_size;
+    ctx->gfx.buffers_allocated = true;
+    ESP_LOGI(TAG, "Allocated frame buffers, size: %zu bytes (mirror: %s, width: %d, height: %d)", 
+             actual_buf_size, ctx->display.flags.mirror ? "enabled" : "disabled", width, height);
+    
+    return ESP_OK;
+}
+
+/**
+ * @brief Free frame buffers
+ * @param ctx Player context
+ */
+static void free_frame_buffers(anim_player_context_t *ctx)
+{
+    if (ctx->gfx.frame_buf1) {
+        free(ctx->gfx.frame_buf1);
+        ctx->gfx.frame_buf1 = NULL;
+    }
+    if (ctx->gfx.frame_buf2) {
+        free(ctx->gfx.frame_buf2);
+        ctx->gfx.frame_buf2 = NULL;
+    }
+    ctx->gfx.buf_size = 0;
+    ctx->gfx.buffers_allocated = false;
+}
+
+/**
+ * @brief Update mirror buffer allocation based on mirror flag
+ * @param ctx Player context
+ * @return esp_err_t ESP_OK on success, otherwise error code
+ */
+static esp_err_t update_mirror_buffer(anim_player_context_t *ctx)
+{
+    if (!ctx->gfx.buffers_allocated) {
+        return ESP_OK; // No buffers allocated yet
+    }
+
+    // Since we now use extended frame buffers instead of separate mirror buffer,
+    // we need to reallocate the frame buffers when mirror flag changes
+    // This will be handled by ensure_frame_buffers when next frame is processed
+    // For now, just mark buffers as needing reallocation
+    ctx->gfx.buffers_allocated = false;
+    ESP_LOGD(TAG, "Marked buffers for reallocation due to mirror flag change");
+    
+    return ESP_OK;
+}
 
 ft_lib_handle_t anim_player_get_font_lib(anim_player_handle_t handle)
 {
@@ -88,18 +188,18 @@ ft_lib_handle_t anim_player_get_font_lib(anim_player_handle_t handle)
     if (ctx == NULL) {
         return NULL;
     }
-    return ctx->font_lib;
+    return ctx->gfx.font_lib;
 }
 
 void anim_player_blend_child(anim_player_context_t *ctx, int x1, int y1, int x2, int y2, const void *dest_buf)
 {
-    if (ctx->child_list == NULL) {
+    if (ctx->gfx.child_list == NULL) {
         return;
     }
 
     // Lock the recursive render mutex to prevent external operations during rendering
-    if (ctx->render_mutex && xSemaphoreTakeRecursive(ctx->render_mutex, portMAX_DELAY) == pdTRUE) {
-        child_t *current = ctx->child_list;
+    if (ctx->gfx.lock_mutex && xSemaphoreTakeRecursive(ctx->gfx.lock_mutex, portMAX_DELAY) == pdTRUE) {
+        anim_player_child_t *current = ctx->gfx.child_list;
         while (current != NULL) {
             gfx_obj_t *obj = (gfx_obj_t *)current->src;
 
@@ -108,19 +208,24 @@ void anim_player_blend_child(anim_player_context_t *ctx, int x1, int y1, int x2,
             } else if (obj->type == GFX_OBJ_TYPE_IMAGE) {
                 gfx_draw_img(obj, x1, y1, x2, y2, dest_buf);
             }
-            
+
             current = current->next;
         }
-        
+
         // Release the recursive mutex after rendering is complete
-        xSemaphoreGiveRecursive(ctx->render_mutex);
+        xSemaphoreGiveRecursive(ctx->gfx.lock_mutex);
     }
 }
 
 static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_header_t *header, anim_player_context_t *ctx)
 {
-    // Allocate memory for split offsets
-    uint16_t *offsets = (uint16_t *)malloc(header->splits * sizeof(uint16_t));
+    int width = header->width;
+    int split_height = header->split_height;
+    int splits = header->splits;
+    bool mirror_enabled = ctx->display.flags.mirror;
+    uint8_t mirror_offset = ctx->gfx.mirror_offset;
+    
+    uint16_t *offsets = (uint16_t *)malloc(splits * sizeof(uint16_t));
     if (offsets == NULL) {
         ESP_LOGE(TAG, "Failed to allocate memory for offsets");
         return ESP_FAIL;
@@ -128,36 +233,23 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
 
     anim_dec_calculate_offsets(header, offsets);
 
-    // Allocate frame buffer
-    // void *buf1 = malloc(header->width * header->split_height * sizeof(uint16_t));
-    uint16_t *buf1 = (uint16_t *)heap_caps_malloc(header->width * header->split_height * sizeof(uint16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (buf1 == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate memory for frame buffer");
+    size_t required_buf_size = width * split_height * sizeof(uint16_t);
+    esp_err_t buf_ret = ensure_frame_buffers(ctx, width, split_height);
+    if (buf_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to ensure frame buffers");
         free(offsets);
-        return ESP_FAIL;
+        return buf_ret;
     }
 
-    uint16_t *buf2 = (uint16_t *)heap_caps_malloc(header->width * header->split_height * sizeof(uint16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (buf2 == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate memory for frame buffer");
-        free(offsets);
-        free(buf1);
-        return ESP_FAIL;
-    }
-
-    // Allocate decode buffer
     uint8_t *decode_buffer = NULL;
     if (header->bit_depth == 4) {
-        decode_buffer = (uint8_t *)malloc(header->width * (header->split_height + (header->split_height % 2)) / 2);
+        decode_buffer = (uint8_t *)malloc(width * (split_height + (split_height % 2)) / 2);
     } else if (header->bit_depth == 8) {
-        // decode_buffer = (uint8_t *)malloc(header->width * header->split_height);
-        decode_buffer = (uint8_t *)heap_caps_malloc(header->width * header->split_height, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        decode_buffer = (uint8_t *)heap_caps_malloc(width * split_height, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (decode_buffer == NULL) {
         ESP_LOGE(TAG, "Failed to allocate memory for decode buffer");
         free(offsets);
-        free(buf1);
-        free(buf2);
         return ESP_FAIL;
     }
 
@@ -169,12 +261,9 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
         color_depth = 256;
     }
 
-    // uint32_t *palette_cache = (uint32_t *)malloc(color_depth * sizeof(uint32_t));
     uint32_t *palette_cache = (uint32_t *)heap_caps_malloc(color_depth * sizeof(uint32_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (palette_cache == NULL) {
         ESP_LOGE(TAG, "Failed to allocate memory for palette_cache");
-        free(buf1);
-        free(buf2);
         free(decode_buffer);
         free(offsets);
         return ESP_FAIL;
@@ -186,29 +275,29 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
 
     uint16_t *buf_act = NULL;
 
-    // Process each split
-    for (int split = 0; split < header->splits; split++) {
+    for (int split = 0; split < splits; split++) {
         const uint8_t *compressed_data = data + offsets[split];
         int compressed_len = header->split_lengths[split];
 
-        buf_act = (buf_act == NULL || buf_act == buf2) ? buf1 : buf2;
+        buf_act = (buf_act == NULL || buf_act == ctx->gfx.frame_buf2) ? ctx->gfx.frame_buf1 : ctx->gfx.frame_buf2;
+
+        memset(buf_act, 0, ctx->gfx.buf_size);
 
         esp_err_t decode_result = ESP_FAIL;
         int valid_height;
 
-        if (split == header->splits - 1) {
-            valid_height = header->height - split * header->split_height;
+        if (split == splits - 1) {
+            valid_height = header->height - split * split_height;
         } else {
-            valid_height = header->split_height;
+            valid_height = split_height;
         }
-        ESP_LOGD(TAG, "split:%d(%d), height:%d(%d), compressed_len:%d", split, header->splits, header->split_height, valid_height, compressed_len);
+        ESP_LOGD(TAG, "split:%d(%d), height:%d(%d), compressed_len:%d", split, splits, split_height, valid_height, compressed_len);
 
-        // Check encoding type from first byte
         if (compressed_data[0] == ENCODING_TYPE_RLE) {
             decode_result = anim_dec_rte_decode(compressed_data + 1, compressed_len - 1,
-                                                decode_buffer, header->width * header->split_height);
+                                                decode_buffer, width * split_height);
         } else if (compressed_data[0] == ENCODING_TYPE_HUFFMAN) {
-            uint8_t *huffman_buffer = malloc(header->width * header->split_height);
+            uint8_t *huffman_buffer = malloc(width * split_height);
             if (huffman_buffer == NULL) {
                 ESP_LOGE(TAG, "Failed to allocate memory for Huffman buffer");
                 continue;
@@ -219,7 +308,7 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
             decode_result = ESP_OK;
             if (decode_result == ESP_OK) {
                 decode_result = anim_dec_rte_decode(huffman_buffer, huffman_decoded_len,
-                                                    decode_buffer, header->width * header->split_height);
+                                                    decode_buffer, width * split_height);
             }
             free(huffman_buffer);
         } else {
@@ -232,40 +321,68 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
             continue;
         }
 
-        // ESP_LOGI(TAG, "header->bit_depth: %d", header->bit_depth);
         if (header->bit_depth == 4) {
+            // Calculate stride once
+            int stride = mirror_enabled ? (width + width + mirror_offset) : width;
+            
             for (int y = 0; y < valid_height; y++) {
-                for (int x = 0; x < header->width; x += 2) {
-                    uint8_t packed_gray = decode_buffer[y * (header->width / 2) + (x / 2)];
+                for (int x = 0; x < width; x += 2) {
+                    uint8_t packed_gray = decode_buffer[y * (width / 2) + (x / 2)];
                     uint8_t index1 = (packed_gray & 0xF0) >> 4;
                     uint8_t index2 = (packed_gray & 0x0F);
 
                     if (palette_cache[index1] == 0xFFFFFFFF) {
-                        uint16_t color = anim_dec_parse_palette(header, index1, ctx->flags.swap);
+                        uint16_t color = anim_dec_parse_palette(header, index1, ctx->display.flags.swap);
                         palette_cache[index1] = color;
                     }
-                    buf_act[y * header->width + x] = (uint16_t)palette_cache[index1];
+                    
+                    uint16_t color1 = (uint16_t)palette_cache[index1];
+                    buf_act[y * stride + x] = color1;
+                    
+                    // Sync write to mirror position if mirror is enabled
+                    if (mirror_enabled) {
+                        int mirror_x = width + mirror_offset + width - 1 - x;
+                        buf_act[y * stride + mirror_x] = color1;
+                    }
 
-                    if (x + 1 < header->width) {
+                    if (x + 1 < width) {
                         if (palette_cache[index2] == 0xFFFFFFFF) {
-                            uint16_t color = anim_dec_parse_palette(header, index2, ctx->flags.swap);
+                            uint16_t color = anim_dec_parse_palette(header, index2, ctx->display.flags.swap);
                             palette_cache[index2] = color;
                         }
-                        buf_act[y * header->width + x + 1] = (uint16_t)palette_cache[index2];
+                        
+                        uint16_t color2 = (uint16_t)palette_cache[index2];
+                        buf_act[y * stride + x + 1] = color2;
+                        
+                        // Sync write to mirror position if mirror is enabled
+                        if (mirror_enabled) {
+                            int mirror_x = width + mirror_offset + width - 1 - (x + 1);
+                            buf_act[y * stride + mirror_x] = color2;
+                        }
                     }
                 }
             }
 
         } else if (header->bit_depth == 8) {
+            // Calculate stride once
+            int stride = mirror_enabled ? (width + width + mirror_offset) : width;
+            
             for (int y = 0; y < valid_height; y++) {
-                for (int x = 0; x < header->width; x++) {
-                    uint8_t index = decode_buffer[y * header->width + x];
+                for (int x = 0; x < width; x++) {
+                    uint8_t index = decode_buffer[y * width + x];
                     if (palette_cache[index] == 0xFFFFFFFF) {
-                        uint16_t color = anim_dec_parse_palette(header, index, ctx->flags.swap);
+                        uint16_t color = anim_dec_parse_palette(header, index, ctx->display.flags.swap);
                         palette_cache[index] = color;
                     }
-                    // Copy the color value directly
-                    buf_act[y * header->width + x] = (uint16_t)palette_cache[index];
+                    
+                    uint16_t color_val = (uint16_t)palette_cache[index];
+                    buf_act[y * stride + x] = color_val;
+                    
+                    // Sync write to mirror position if mirror is enabled
+                    if (mirror_enabled) {
+                        int mirror_x = width + mirror_offset + width - 1 - x;
+                        buf_act[y * stride + mirror_x] = color_val;
+                    }
                 }
             }
         } else {
@@ -273,20 +390,24 @@ static esp_err_t anim_player_parse(const uint8_t *data, size_t data_len, image_h
             continue;
         }
 
-        xEventGroupClearBits(ctx->events.event_group, WAIT_FLUSH_DONE);
         if (ctx->flush_cb) {
-            // ESP_LOGI(TAG, "flush_cb, mirror:%d", ctx->flags.mirror);
-            anim_player_blend_child(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf_act);
-            ctx->flush_cb(ctx, 0, split * header->split_height, header->width, split * header->split_height + valid_height, buf_act);
+            xEventGroupClearBits(ctx->events.event_group, WAIT_FLUSH_DONE);
+            
+            if (mirror_enabled) {
+                int total_width = width + width + mirror_offset;
+                anim_player_blend_child(ctx, 0, split * split_height, total_width, split * split_height + valid_height, buf_act);
+                ctx->flush_cb(ctx, 0, split * split_height, total_width, split * split_height + valid_height, buf_act);
+            } else {
+                anim_player_blend_child(ctx, 0, split * split_height, width, split * split_height + valid_height, buf_act);
+                ctx->flush_cb(ctx, 0, split * split_height, width, split * split_height + valid_height, buf_act);
+            }
+            
+            xEventGroupWaitBits(ctx->events.event_group, WAIT_FLUSH_DONE, pdTRUE, pdFALSE, pdMS_TO_TICKS(20));
         }
-        xEventGroupWaitBits(ctx->events.event_group, WAIT_FLUSH_DONE, pdTRUE, pdFALSE, pdMS_TO_TICKS(20));
     }
 
-    // Cleanup
     free(palette_cache);
     free(offsets);
-    free(buf1);
-    free(buf2);
     free(decode_buffer);
     anim_dec_free_header(header);
 
@@ -299,18 +420,16 @@ static void anim_player_task(void *arg)
     anim_player_context_t *ctx = (anim_player_context_t *)arg;
     anim_player_run_ctx_t run_ctx;
 
-    anim_player_event_t player_event;
-
     run_ctx.action = PLAYER_ACTION_STOP;
-    run_ctx.run_start = ctx->run_start;
-    run_ctx.run_end = ctx->run_end;
-    run_ctx.repeat = ctx->repeat;
-    run_ctx.fps = ctx->fps;
+    run_ctx.config.run_start = ctx->run_cfg.run_start;
+    run_ctx.config.run_end = ctx->run_cfg.run_end;
+    run_ctx.config.repeat = ctx->run_cfg.repeat;
+    run_ctx.config.fps = ctx->run_cfg.fps;
     run_ctx.last_frame_time = esp_timer_get_time();
 
     while (1) {
         EventBits_t bits = xEventGroupWaitBits(ctx->events.event_group,
-                                               NEED_DELETE | WAIT_STOP,
+                                               NEED_DELETE | WAIT_STOP | PLAYER_START | PLAYER_STOP,
                                                pdTRUE, pdFALSE, pdMS_TO_TICKS(10));
 
         if (bits & NEED_DELETE) {
@@ -323,40 +442,42 @@ static void anim_player_task(void *arg)
             xEventGroupSetBits(ctx->events.event_group, WAIT_STOP_DONE);
         }
 
-        // Check for new events in queue
-        if (xQueueReceive(ctx->events.event_queue, &player_event, 0) == pdTRUE) {
-            run_ctx.action = player_event.action;
-            run_ctx.run_start = ctx->run_start;
-            run_ctx.run_end = ctx->run_end;
-            run_ctx.repeat = ctx->repeat;
-            run_ctx.fps = ctx->fps;
-            ESP_LOGD(TAG, "Player updated [%s]: %d -> %d, repeat:%d, fps:%d",
-                     run_ctx.action == PLAYER_ACTION_START ? "START" : "STOP",
-                     run_ctx.run_start, run_ctx.run_end, run_ctx.repeat, run_ctx.fps);
+        // Check for player action events
+        if (bits & PLAYER_START) {
+            run_ctx.action = PLAYER_ACTION_START;
+            run_ctx.config.run_start = ctx->run_cfg.run_start;
+            run_ctx.config.run_end = ctx->run_cfg.run_end;
+            run_ctx.config.repeat = ctx->run_cfg.repeat;
+            run_ctx.config.fps = ctx->run_cfg.fps;
+            ESP_LOGD(TAG, "Player updated [START]: %d -> %d, repeat:%d, fps:%d",
+                     run_ctx.config.run_start, run_ctx.config.run_end, run_ctx.config.repeat, run_ctx.config.fps);
+        }
+
+        if (bits & PLAYER_STOP) {
+            run_ctx.action = PLAYER_ACTION_STOP;
+            run_ctx.config.repeat = false;
+            ESP_LOGD(TAG, "Player updated [STOP]");
         }
 
         if (run_ctx.action == PLAYER_ACTION_STOP) {
             continue;
         }
 
-        // Process animation frames
         do {
-            for (int i = run_ctx.run_start; (i <= run_ctx.run_end) && (run_ctx.action != PLAYER_ACTION_STOP); i++) {
+            for (int i = run_ctx.config.run_start; (i <= run_ctx.config.run_end) && (run_ctx.action != PLAYER_ACTION_STOP); i++) {
                 // Frame rate control
                 int64_t elapsed = esp_timer_get_time() - run_ctx.last_frame_time;
                 elapsed = elapsed / 1000;
-                if (elapsed < FPS_TO_MS(run_ctx.fps)) {
-                    vTaskDelay(pdMS_TO_TICKS(FPS_TO_MS(run_ctx.fps) - elapsed));
-                    ESP_LOGD(TAG, "delay: %d ms", (int)(FPS_TO_MS(run_ctx.fps) - elapsed));
-                    // ESP_LOGW(TAG, "%d, delay: %d ms, fps: %d, MS: %d ms, elapsed: %d ms", i, (int)(FPS_TO_MS(run_ctx.fps) - elapsed), run_ctx.fps, FPS_TO_MS(run_ctx.fps), (int)elapsed);
+                if (elapsed < FPS_TO_MS(run_ctx.config.fps)) {
+                    vTaskDelay(pdMS_TO_TICKS(FPS_TO_MS(run_ctx.config.fps) - elapsed));
+                    ESP_LOGD(TAG, "delay: %d ms", (int)(FPS_TO_MS(run_ctx.config.fps) - elapsed));
                 } else {
                     vTaskDelay(pdMS_TO_TICKS(1));
                 }
                 run_ctx.last_frame_time = esp_timer_get_time();
 
-                // Check for new events or delete request
                 bits = xEventGroupWaitBits(ctx->events.event_group,
-                                           NEED_DELETE | WAIT_STOP,
+                                           NEED_DELETE | WAIT_STOP | PLAYER_START | PLAYER_STOP,
                                            pdTRUE, pdFALSE, pdMS_TO_TICKS(0));
                 if (bits & NEED_DELETE) {
                     ESP_LOGW(TAG, "Playing deleted");
@@ -366,21 +487,20 @@ static void anim_player_task(void *arg)
                 if (bits & WAIT_STOP) {
                     xEventGroupSetBits(ctx->events.event_group, WAIT_STOP_DONE);
                 }
-
-                if (xQueueReceive(ctx->events.event_queue, &player_event, 0) == pdTRUE) {
-                    run_ctx.action = player_event.action;
-                    run_ctx.run_start = ctx->run_start;
-                    run_ctx.run_end = ctx->run_end;
-                    run_ctx.fps = ctx->fps;
-                    if (run_ctx.action == PLAYER_ACTION_STOP) {
-                        run_ctx.repeat = false;
-                    } else {
-                        run_ctx.repeat = ctx->repeat;
-                    }
-
-                    ESP_LOGD(TAG, "Playing updated [%s]: %d -> %d, repeat:%d, fps:%d",
-                             run_ctx.action == PLAYER_ACTION_START ? "START" : "STOP",
-                             run_ctx.run_start, run_ctx.run_end, run_ctx.repeat, run_ctx.fps);
+                if (bits & PLAYER_START) {
+                    run_ctx.action = PLAYER_ACTION_START;
+                    run_ctx.config.run_start = ctx->run_cfg.run_start;
+                    run_ctx.config.run_end = ctx->run_cfg.run_end;
+                    run_ctx.config.repeat = ctx->run_cfg.repeat;
+                    run_ctx.config.fps = ctx->run_cfg.fps;
+                    ESP_LOGD(TAG, "Playing updated [START]: %d -> %d, repeat:%d, fps:%d",
+                             run_ctx.config.run_start, run_ctx.config.run_end, run_ctx.config.repeat, run_ctx.config.fps);
+                    break;
+                }
+                if (bits & PLAYER_STOP) {
+                    run_ctx.action = PLAYER_ACTION_STOP;
+                    run_ctx.config.repeat = false;
+                    ESP_LOGD(TAG, "Playing updated [STOP]");
                     break;
                 }
 
@@ -388,9 +508,6 @@ static void anim_player_task(void *arg)
                 size_t frame_size = anim_vfs_get_frame_size(ctx->info.file_desc, i);
 
                 image_format_t format = anim_dec_parse_header(frame_data, frame_size, &header);
-
-                ctx->screen_w = header.width;
-                ctx->screen_h = header.height;
 
                 if (format == IMAGE_FORMAT_INVALID) {
                     ESP_LOGE(TAG, "Invalid frame format");
@@ -408,7 +525,7 @@ static void anim_player_task(void *arg)
             if (ctx->update_cb) {
                 ctx->update_cb(ctx, PLAYER_EVENT_ALL_FRAME_DONE);
             }
-        } while (run_ctx.repeat);
+        } while (run_ctx.config.repeat);
 
         run_ctx.action = PLAYER_ACTION_STOP;
 
@@ -445,13 +562,9 @@ void anim_player_update(anim_player_handle_t handle, player_action_t event)
         return;
     }
 
-    anim_player_event_t player_event = {
-        .action = event,
-    };
+    EventBits_t event_bit = (event == PLAYER_ACTION_START) ? PLAYER_START : PLAYER_STOP;
 
-    if (xQueueSend(ctx->events.event_queue, &player_event, pdMS_TO_TICKS(10)) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to send event to queue");
-    }
+    xEventGroupSetBits(ctx->events.event_group, event_bit);
     ESP_LOGD(TAG, "update event: %s", event == PLAYER_ACTION_START ? "START" : "STOP");
 }
 
@@ -485,10 +598,10 @@ esp_err_t anim_player_set_src_data(anim_player_handle_t handle, const void *src_
     ctx->info.end = anim_vfs_get_total_frames(new_desc) - 1;
 
     //default segment
-    ctx->run_start = ctx->info.start;
-    ctx->run_end = ctx->info.end;
-    ctx->repeat = true;
-    ctx->fps = CONFIG_ANIM_PLAYER_DEFAULT_FPS;
+    ctx->run_cfg.run_start = ctx->info.start;
+    ctx->run_cfg.run_end = ctx->info.end;
+    ctx->run_cfg.repeat = true;
+    ctx->run_cfg.fps = CONFIG_ANIM_PLAYER_DEFAULT_FPS;
 
     return ESP_OK;
 }
@@ -518,10 +631,10 @@ void anim_player_set_segment(anim_player_handle_t handle, uint32_t start, uint32
         return;
     }
 
-    ctx->run_start = start;
-    ctx->run_end = end;
-    ctx->repeat = repeat;
-    ctx->fps = fps;
+    ctx->run_cfg.run_start = start;
+    ctx->run_cfg.run_end = end;
+    ctx->run_cfg.repeat = repeat;
+    ctx->run_cfg.fps = fps;
     ESP_LOGD(TAG, "set segment: %" PRIu32 " -> %" PRIu32 ", repeat:%d, fps:%" PRIu32 "", start, end, repeat, fps);
 }
 
@@ -552,37 +665,41 @@ anim_player_handle_t anim_player_init(const anim_player_config_t *config)
     player->info.file_desc = NULL;
     player->info.start = 0;
     player->info.end = 0;
-    player->run_start = 0;
-    player->run_end = 0;
-    player->repeat = false;
-    player->fps = CONFIG_ANIM_PLAYER_DEFAULT_FPS;
+    player->run_cfg.run_start = 0;
+    player->run_cfg.run_end = 0;
+    player->run_cfg.repeat = false;
+    player->run_cfg.fps = CONFIG_ANIM_PLAYER_DEFAULT_FPS;
     player->flush_cb = config->flush_cb;
     player->update_cb = config->update_cb;
     player->user_data = config->user_data;
 
-    player->flags.mirror = config->flags.mirror;
-    player->flags.swap = config->flags.swap;
-    
+    player->display.flags.mirror = config->flags.mirror;
+    player->display.flags.swap = config->flags.swap;
+
     player->events.event_group = xEventGroupCreate();
-    player->events.event_queue = xQueueCreate(5, sizeof(anim_player_event_t));
-    player->child_list = NULL;
+    player->gfx.child_list = NULL;
+    
+    // Initialize buffer management
+    player->gfx.frame_buf1 = NULL;
+    player->gfx.frame_buf2 = NULL;
+    player->gfx.buf_size = 0;
+    player->gfx.buffers_allocated = false;
+    player->gfx.mirror_offset = 60;  // Default mirror offset
     
     // Create recursive render mutex for protecting rendering operations
-    player->render_mutex = xSemaphoreCreateRecursiveMutex();
-    if (player->render_mutex == NULL) {
+    player->gfx.lock_mutex = xSemaphoreCreateRecursiveMutex();
+    if (player->gfx.lock_mutex == NULL) {
         ESP_LOGE(TAG, "Failed to create recursive render mutex");
         vEventGroupDelete(player->events.event_group);
-        vQueueDelete(player->events.event_queue);
         free(player);
         return NULL;
     }
-    
+
     // Initialize font library for this player instance
-    esp_err_t font_ret = gfx_ft_lib_create(&player->font_lib);
+    esp_err_t font_ret = gfx_ft_lib_create(&player->gfx.font_lib);
     if (font_ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create font library");
         vEventGroupDelete(player->events.event_group);
-        vQueueDelete(player->events.event_queue);
         free(player);
         return NULL;
     }
@@ -590,9 +707,9 @@ anim_player_handle_t anim_player_init(const anim_player_config_t *config)
     // Set default task configuration if not specified
     const uint32_t caps = config->task.task_stack_caps ? config->task.task_stack_caps : MALLOC_CAP_DEFAULT; // caps cannot be zero
     if (config->task.task_affinity < 0) {
-        xTaskCreateWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, caps);
+        xTaskCreateWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, NULL, caps);
     } else {
-        xTaskCreatePinnedToCoreWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, &player->handle_task, config->task.task_affinity, caps);
+        xTaskCreatePinnedToCoreWithCaps(anim_player_task, "Anim Player", config->task.task_stack, player, config->task.task_priority, NULL, config->task.task_affinity, caps);
     }
 
     return (anim_player_handle_t)player;
@@ -607,13 +724,13 @@ void anim_player_deinit(anim_player_handle_t handle)
     }
 
     // Free all child nodes
-    child_t *current = ctx->child_list;
+    anim_player_child_t *current = ctx->gfx.child_list;
     while (current != NULL) {
-        child_t *next = current->next;
+        anim_player_child_t *next = current->next;
         free(current);
         current = next;
     }
-    ctx->child_list = NULL;
+    ctx->gfx.child_list = NULL;
 
     // Send event to stop the task
     if (ctx->events.event_group) {
@@ -627,29 +744,23 @@ void anim_player_deinit(anim_player_handle_t handle)
         ctx->events.event_group = NULL;
     }
 
-    // Delete event queue
-    if (ctx->events.event_queue) {
-        vQueueDelete(ctx->events.event_queue);
-        ctx->events.event_queue = NULL;
-    }
-
     if (ctx->info.file_desc) {
         anim_vfs_deinit(ctx->info.file_desc);
         ctx->info.file_desc = NULL;
     }
 
-    if (ctx->font_lib) {
-        gfx_ft_lib_cleanup(ctx->font_lib);
-        ctx->font_lib = NULL;
+    if (ctx->gfx.font_lib) {
+        gfx_ft_lib_cleanup(ctx->gfx.font_lib);
+        ctx->gfx.font_lib = NULL;
     }
 
-    // Delete render mutex
-    if (ctx->render_mutex) {
-        vSemaphoreDelete(ctx->render_mutex);
-        ctx->render_mutex = NULL;
+    free_frame_buffers(ctx);
+
+    if (ctx->gfx.lock_mutex) {
+        vSemaphoreDelete(ctx->gfx.lock_mutex);
+        ctx->gfx.lock_mutex = NULL;
     }
 
-    // Free player context
     free(ctx);
 }
 
@@ -662,7 +773,7 @@ esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src
     }
 
     // Create new child node
-    child_t *new_child = (child_t *)malloc(sizeof(child_t));
+    anim_player_child_t *new_child = (anim_player_child_t *)malloc(sizeof(anim_player_child_t));
     if (new_child == NULL) {
         ESP_LOGE(TAG, "Failed to allocate memory for child");
         return ESP_ERR_NO_MEM;
@@ -674,10 +785,10 @@ esp_err_t anim_player_add_child(anim_player_handle_t handle, int type, void *src
     new_child->next = NULL;
 
     // Add to the end of the list
-    if (ctx->child_list == NULL) {
-        ctx->child_list = new_child;
+    if (ctx->gfx.child_list == NULL) {
+        ctx->gfx.child_list = new_child;
     } else {
-        child_t *current = ctx->child_list;
+        anim_player_child_t *current = ctx->gfx.child_list;
         while (current->next != NULL) {
             current = current->next;
         }
@@ -696,12 +807,12 @@ esp_err_t gfx_player_lock(anim_player_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (ctx->render_mutex == NULL) {
+    if (ctx->gfx.lock_mutex == NULL) {
         ESP_LOGE(TAG, "Recursive render mutex not initialized");
         return ESP_ERR_INVALID_STATE;
     }
 
-    if (xSemaphoreTakeRecursive(ctx->render_mutex, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTakeRecursive(ctx->gfx.lock_mutex, portMAX_DELAY) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to acquire recursive render mutex");
         return ESP_ERR_TIMEOUT;
     }
@@ -717,15 +828,89 @@ esp_err_t gfx_player_unlock(anim_player_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (ctx->render_mutex == NULL) {
+    if (ctx->gfx.lock_mutex == NULL) {
         ESP_LOGE(TAG, "Recursive render mutex not initialized");
         return ESP_ERR_INVALID_STATE;
     }
 
-    if (xSemaphoreGiveRecursive(ctx->render_mutex) != pdTRUE) {
+    if (xSemaphoreGiveRecursive(ctx->gfx.lock_mutex) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to release recursive render mutex");
         return ESP_ERR_INVALID_STATE;
     }
 
+    return ESP_OK;
+}
+
+esp_err_t anim_player_set_mirror(anim_player_handle_t handle, bool mirror)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (ctx->display.flags.mirror == mirror) {
+        return ESP_OK; // No change needed
+    }
+
+    ctx->display.flags.mirror = mirror;
+    
+    esp_err_t ret = update_mirror_buffer(ctx);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update mirror buffer");
+        return ret;
+    }
+
+    ESP_LOGD(TAG, "Mirror flag set to: %s", mirror ? "true" : "false");
+    return ESP_OK;
+}
+
+esp_err_t anim_player_set_mirror_offset(anim_player_handle_t handle, uint8_t offset)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ctx->gfx.mirror_offset = offset;
+    ESP_LOGD(TAG, "Mirror offset set to: %d", offset);
+    return ESP_OK;
+}
+
+uint8_t anim_player_get_mirror_offset(anim_player_handle_t handle)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return 0;
+    }
+
+    return ctx->gfx.mirror_offset;
+}
+
+esp_err_t anim_player_set_mirror_config(anim_player_handle_t handle, bool mirror, uint8_t offset)
+{
+    anim_player_context_t *ctx = (anim_player_context_t *)handle;
+    if (ctx == NULL) {
+        ESP_LOGE(TAG, "Invalid player context");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // Set mirror flag
+    if (ctx->display.flags.mirror != mirror) {
+        ctx->display.flags.mirror = mirror;
+        
+        esp_err_t ret = update_mirror_buffer(ctx);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to update mirror buffer");
+            return ret;
+        }
+    }
+
+    // Set mirror offset
+    ctx->gfx.mirror_offset = offset;
+    
+    ESP_LOGD(TAG, "Mirror config set: mirror=%s, offset=%d", mirror ? "true" : "false", offset);
     return ESP_OK;
 }

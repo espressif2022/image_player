@@ -29,10 +29,18 @@ static gfx_opa_t s_default_font_opa = 0xFF;
 // Internal function to get default font configuration
 void gfx_get_default_font_config(gfx_font_t *font, uint16_t *size, gfx_color_t *color, gfx_opa_t *opa)
 {
-    if (font) *font = s_default_font;
-    if (size) *size = s_default_font_size;
-    if (color) *color = s_default_font_color;
-    if (opa) *opa = s_default_font_opa;
+    if (font) {
+        *font = s_default_font;
+    }
+    if (size) {
+        *size = s_default_font_size;
+    }
+    if (color) {
+        *color = s_default_font_color;
+    }
+    if (opa) {
+        *opa = s_default_font_opa;
+    }
 }
 
 esp_err_t gfx_ft_lib_create(ft_lib_handle_t *ret_lib)
@@ -44,7 +52,7 @@ esp_err_t gfx_ft_lib_create(ft_lib_handle_t *ret_lib)
 
     ft_library_t *lib = (ft_library_t *)calloc(1, sizeof(ft_library_t));
     ESP_RETURN_ON_FALSE(lib, ESP_ERR_NO_MEM, TAG, "no mem for FT library");
-    
+
     // Initialize the linked list manually since we removed SLIST macros
     lib->ft_face_head = NULL;
 
@@ -66,7 +74,7 @@ esp_err_t gfx_ft_lib_cleanup(ft_lib_handle_t lib_handle)
     ESP_RETURN_ON_FALSE(lib_handle, ESP_ERR_INVALID_ARG, TAG, "invalid library");
 
     ft_library_t *lib = (ft_library_t *)lib_handle;
-    
+
     // Clean up the linked list manually
     ft_face_entry_t *entry = lib->ft_face_head;
     while (entry != NULL) {
@@ -75,7 +83,7 @@ esp_err_t gfx_ft_lib_cleanup(ft_lib_handle_t lib_handle)
         free(entry);
         entry = next;
     }
-    
+
     FT_Done_FreeType((FT_Library)lib->ft_library);
     free(lib);
 
@@ -94,9 +102,9 @@ esp_err_t gfx_label_new_font(anim_player_handle_t handle, const gfx_label_cfg_t 
 
     ft_library_t *lib = anim_player_get_font_lib(handle);
     ESP_RETURN_ON_FALSE(lib, ESP_ERR_INVALID_STATE, TAG, "font library is NULL");
-    
+
     ft_face_entry_t *entry;
-    
+
     // Search for existing font
     entry = lib->ft_face_head;
     while (entry != NULL) {
@@ -121,7 +129,7 @@ esp_err_t gfx_label_new_font(anim_player_handle_t handle, const gfx_label_cfg_t 
     }
 
     gfx_font_t font_handle = (gfx_font_t)face;
-    
+
     // Set first font as default font automatically
     if (s_default_font == NULL) {
         s_default_font = font_handle;

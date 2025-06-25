@@ -55,8 +55,8 @@ gfx_color_t gfx_blend_color_hex(uint32_t c)
 }
 
 void gfx_sw_blend_draw(gfx_color_t *dest_buf, gfx_coord_t dest_stride,
-                   gfx_color_t color, gfx_opa_t opa,
-                   const gfx_opa_t *mask, gfx_area_t *clip_area, gfx_coord_t mask_stride)
+                       gfx_color_t color, gfx_opa_t opa,
+                       const gfx_opa_t *mask, gfx_area_t *clip_area, gfx_coord_t mask_stride)
 {
     int32_t w = clip_area->x2 - clip_area->x1;
     int32_t h = clip_area->y2 - clip_area->y1;
@@ -139,9 +139,9 @@ void gfx_sw_blend_draw(gfx_color_t *dest_buf, gfx_coord_t dest_stride,
 }
 
 void gfx_sw_blend_img_draw(gfx_color_t *dest_buf, gfx_coord_t dest_stride,
-                       const gfx_color_t *src_buf, gfx_coord_t src_stride,
-                       const gfx_opa_t *mask, gfx_coord_t mask_stride,
-                       gfx_area_t *clip_area, gfx_opa_t opa)
+                           const gfx_color_t *src_buf, gfx_coord_t src_stride,
+                           const gfx_opa_t *mask, gfx_coord_t mask_stride,
+                           gfx_area_t *clip_area, gfx_opa_t opa)
 {
     int32_t w = clip_area->x2 - clip_area->x1;
     int32_t h = clip_area->y2 - clip_area->y1;

@@ -36,27 +36,12 @@ void mem_monitor()
 }
 
 static void anim_flush_cb(anim_player_handle_t handle, int x1, int y1, int x2, int y2, const void *data)
-#if 1
 {
     lv_obj_t *flush_canvas = (lv_obj_t *)anim_player_get_user_data(handle);
 
-    // int64_t start_time = esp_timer_get_time();
-    // lv_canvas_copy_buf(flush_canvas, (const void *)data, (lv_coord_t)x1, (lv_coord_t)y1, (lv_coord_t)(x2 - x1), (lv_coord_t)(y2 - y1));
-    // int64_t end_time = esp_timer_get_time();
-    // ESP_LOGI(TAG, "Flush time: %lld us", end_time - start_time);
+    lv_canvas_copy_buf(flush_canvas, (const void *)data, (lv_coord_t)x1, (lv_coord_t)y1, (lv_coord_t)(x2 - x1), (lv_coord_t)(y2 - y1));
     anim_player_flush_ready(handle);
 }
-#else
-{
-    // esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)anim_player_get_user_data(handle);
-    // if(y1 == 0) {
-        // ESP_LOGI(TAG, "Flush: (%03d,%03d) (%03d,%03d)", x1, y1, x2, y2);
-    // }
-    // esp_lcd_panel_draw_bitmap(panel_handle, x1, y1, x2, y2, data);
-    anim_player_flush_ready(handle);
-    // ESP_LOGI(TAG, "Flush ready");
-}
-#endif
 
 static void anim_update_cb(anim_player_handle_t handle, player_event_t event)
 {
@@ -74,10 +59,10 @@ static void anim_update_cb(anim_player_handle_t handle, player_event_t event)
             start_time = esp_timer_get_time();
         }
         total_frames++;
-        // bsp_display_lock(0);
-        // lv_obj_invalidate(flush_canvas);
-        // lv_refr_now(NULL);
-        // bsp_display_unlock();
+        bsp_display_lock(0);
+        lv_obj_invalidate(flush_canvas);
+        lv_refr_now(NULL);
+        bsp_display_unlock();
         break;
     case PLAYER_EVENT_ALL_FRAME_DONE:
         {

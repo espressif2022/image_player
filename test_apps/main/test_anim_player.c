@@ -201,6 +201,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
 
     handle = anim_player_init(&config);
 
+    //set it during running is not supported now
     anim_player_set_mirror_config(handle, true, (320 - 200));
 
     gfx_label_cfg_t font_config = {
@@ -212,10 +213,10 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     gfx_label_new_font(handle, &font_config, &font);
 
     label1 = gfx_label_create(handle);
-    gfx_obj_set_pos(label1, 80, 10);
+    gfx_obj_set_pos(label1, 30, 10);
     gfx_obj_set_size(label1, 300, 50);
     gfx_label_set_text(label1, "ABCD");
-    gfx_label_set_font_size(label1, 15);
+    gfx_label_set_font_size(label1, 20);
     gfx_label_set_color(label1, GFX_COLOR_HEX(0x0000FF));
 
     // label2 = gfx_label_create(handle);
@@ -225,7 +226,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     // gfx_label_set_color(label2, GFX_COLOR_HEX(0xFF0000));
 
     image1 = gfx_img_create(handle);
-    gfx_obj_set_pos(image1, 150, 20);
+    gfx_obj_set_pos(image1, 120, 20);
     gfx_img_set_src(image1, (void *)&icon1);
 
     const esp_lcd_panel_io_callbacks_t cbs = {
@@ -247,7 +248,7 @@ static void test_anim_player_common(const char *partition_label, uint32_t max_fi
     anim_player_set_src_data(handle, src_data, src_len);
     anim_player_get_segment(handle, &start, &end);
     // anim_player_set_segment(handle, start, end, 100, true);
-    anim_player_set_segment(handle, start, end, 60, true);
+    anim_player_set_segment(handle, start, end, 30, true);
     ESP_LOGW(TAG, "start:%" PRIu32 ", end:%" PRIu32 "", start, end);
 
     anim_player_update(handle, PLAYER_ACTION_START);
